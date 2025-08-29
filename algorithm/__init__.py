@@ -1,0 +1,2 @@
+# Algorithm components
+from .optimization_algorithm import PersonalizedMarketingAlgorithm

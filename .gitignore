@@ -1,0 +1,126 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.vscode/
+.idea/
+.cursor/
+.claude/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Results and large data files
+results/
+reward_model_results/
+*.pkl
+*.pickle
+*.joblib
+
+# Large CSV files (but allow sample/config CSVs)
+**/observations/*.csv
+
+# Cache and temporary JSON files
+embedding_cache.json
+*_cache.json
+test_cache*.json
+neural_reward_model_optimization_results.json
+action_embeddings_cache.json
+
+# Model files
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.model
+
+# Logs
+*.log
+logs/
+job.*.out
+job.*.err
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# OpenAI API keys and sensitive files
+.env.local
+.env.*.local
+embedding_cache.json
+api_keys.txt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# HPC/Slurm files
+slurm-*.out
+*.sbatch.o*
+*.sbatch.e*
+*.out
+
+# LaTeX files
+*.tex
+
+# Shell scripts
+versatile.sh
+
+# Markdown files (except README.md)
+*.md
+!README.md
+
+# Cache files
+.cache/
+*.cache
+
+# Compiled files
+*.o
+*.a
+*.lib
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
