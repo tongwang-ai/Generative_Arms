@@ -325,7 +325,7 @@ def main():
     parser.add_argument('--action_pool_size', type=int, default=2000,
                        help='Action pool size for generation (default: 2000)')
     parser.add_argument('--action_bank_size', type=int, default=20,
-                       help='New action bank size for each iteration (default: 20)')
+                       help='New action bank size per iteration (default: 20)')
     
     # Reward model selection
     parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'doubly_robust'],

@@ -77,7 +77,7 @@ class ActionSelector:
         current_user_max_rewards, current_best_actions, current_reward_matrix, current_action_stats = self._compute_user_max_rewards_debug(selected_actions, users, reward_model)
         
         # Print debug info about current action bank
-        print(f"🔍 DEBUG: Current action bank analysis:")
+        print(f"Current action bank analysis:")
         if selected_actions:
             print(f"  Actions in current bank: {len(selected_actions)}")
             for action_id, stats in current_action_stats.items():

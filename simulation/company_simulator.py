@@ -103,7 +103,6 @@ class CompanySimulator:
         )
         
         # Simulation state
-        self.users = []
         self.current_action_bank = []
         self.all_observations = []
         self.iteration_results = []
@@ -141,17 +140,35 @@ class CompanySimulator:
         print(f"Configured to generate {n_users} new users per iteration")
         print(f"Configured to generate {n_initial_actions} initial actions in first iteration")
         
-        # Initialize empty action bank - will be created in first iteration
-        self.current_action_bank = []
-        
-        # Create initialization directory and summary
+        # Create initialization directory
         init_dir = os.path.join(self.results_dir, "initialization")
         os.makedirs(init_dir, exist_ok=True)
         
+        # Generate initial action bank during initialization
+        print(f"Creating initial action bank with {self.n_initial_actions} actions...")
+        action_gen_start = time.time()
+        self.current_action_bank = create_marketing_action_bank(
+            self.action_embedder, 
+            n_actions=self.n_initial_actions,
+            use_chatgpt=self.use_chatgpt_actions,  # Use ChatGPT for diverse action generation
+            product_focus="professional platform membership"  # Focus all actions on same product
+        )
+        action_gen_time = time.time() - action_gen_start
+        print(f"   ⏱️  Initial action bank creation completed in {action_gen_time:.2f}s")
+        
+        # Save initial action bank to initialization directory
+        action_bank_dir = os.path.join(init_dir, "action_bank")
+        os.makedirs(action_bank_dir, exist_ok=True)
+        
+        action_bank_file = os.path.join(action_bank_dir, "action_bank.json")
+        self.action_embedder.save_embedded_actions(self.current_action_bank, action_bank_file)
+        
+        # Create initialization summary
         init_summary = {
             'timestamp': datetime.now().isoformat(),
             'n_users_per_iteration': self.n_users,
             'n_initial_actions': self.n_initial_actions,
+            'initial_action_bank_size': len(self.current_action_bank),
             'embedding_model': self.action_embedder.model if self.action_embedder.use_openai else 'fallback'
         }
         
@@ -162,13 +179,15 @@ class CompanySimulator:
         init_time = time.time() - init_start
         print(f"Initialization complete!")
         print(f"  Configuration: {self.n_initial_actions} initial actions, {self.n_users} users per iteration")
+        print(f"  Initial action bank created with {len(self.current_action_bank)} actions")
         print(f"  Results saved to: {os.path.join(self.results_dir, 'initialization')}")
         print(f"  ⏱️  Total initialization time: {init_time:.2f}s")
-        print(f"  Users and action banks will be generated fresh for each iteration")
+        print(f"  Users will be generated fresh for each iteration")
         
         return init_summary
     
     def filter_and_balance_actions(self, iteration_dir: str, 
+                                 users: List[MeaningfulUser],
                                  min_conversion: float = 0.30, 
                                  max_conversion: float = 0.75,
                                  max_attempts: int = 5):
@@ -188,7 +207,7 @@ class CompanySimulator:
         
         while attempt < max_attempts:
             attempt += 1
-            conversion_rates = self.compute_ground_truth_conversion_rates()
+            conversion_rates = self.compute_ground_truth_conversion_rates(users)
             
             # Identify actions to remove
             actions_to_remove = []
@@ -232,7 +251,7 @@ class CompanySimulator:
             print(f"⚠️  Reached maximum attempts ({max_attempts}). Using current action bank.")
         
         # Save filtering results
-        final_conversion_rates = self.compute_ground_truth_conversion_rates()
+        final_conversion_rates = self.compute_ground_truth_conversion_rates(users)
         rates = list(final_conversion_rates.values())
         
         filtering_results = {
@@ -326,27 +345,8 @@ class CompanySimulator:
         with open(segment_file, 'w') as f:
             json.dump(segment_summary, f, indent=2)
         
-        # Generate action bank for this iteration (initial for first iteration, or keep existing)
-        if iteration == 1:
-            print(f"Creating initial action bank with {self.n_initial_actions} actions...")
-            action_gen_start = time.time()
-            self.current_action_bank = create_marketing_action_bank(
-                self.action_embedder, 
-                n_actions=self.n_initial_actions,
-                use_chatgpt=self.use_chatgpt_actions,  # Use ChatGPT for diverse action generation
-                product_focus="professional platform membership"  # Focus all actions on same product
-            )
-            action_gen_time = time.time() - action_gen_start
-            print(f"   ⏱️  Action bank creation completed in {action_gen_time:.2f}s")
-            
-            # Save initial action bank
-            action_bank_dir = os.path.join(iteration_dir, "action_bank")
-            os.makedirs(action_bank_dir, exist_ok=True)
-            
-            action_bank_file = os.path.join(action_bank_dir, "action_bank.json")
-            self.action_embedder.save_embedded_actions(self.current_action_bank, action_bank_file)
-        else:
-            print(f"Using existing action bank with {len(self.current_action_bank)} actions for iteration {iteration}")
+        # Use the action bank that was initialized during setup or updated from previous iterations
+        print(f"Using action bank with {len(self.current_action_bank)} actions for iteration {iteration}")
         
         # Print ground truth preference analysis (beginning of iteration)
         print(f"\n🎯 Pre-Simulation Analysis (Start of Iteration {iteration}):")
@@ -518,11 +518,11 @@ class CompanySimulator:
         print(f"  Results saved to: {iteration_dir}")
         
         # DEBUG: Analyze company strategy behavior
-        self._debug_company_strategy_behavior(observations, iteration)
+        self._debug_company_strategy_behavior(observations, iteration, iteration_users)
         
         return iteration_results
     
-    def _debug_company_strategy_behavior(self, observations: List, iteration: int):
+    def _debug_company_strategy_behavior(self, observations: List, iteration: int, iteration_users: List[MeaningfulUser]):
         """DEBUG: Analyze company strategy action selection behavior."""
         from collections import Counter
         
@@ -540,11 +540,11 @@ class CompanySimulator:
         # 2. Analyze final policy behavior (how it would assign all users now)
         print(f"2. Final policy assignments (if all users were processed now):")
         try:
-            final_assignments = self.company_strategy.select_actions(self.users, self.current_action_bank)
+            final_assignments = self.company_strategy.select_actions(iteration_users, self.current_action_bank)
             final_usage = Counter(final_assignments.values())
             
             for action_id, count in final_usage.most_common():
-                percentage = count / len(self.users) * 100
+                percentage = count / len(iteration_users) * 100
                 action_text = next((a.text for a in self.current_action_bank if a.action_id == action_id), "Unknown")[:40]
                 print(f"   {action_id}: {count:4d} users ({percentage:5.1f}%) - {action_text}...")
                 
@@ -553,7 +553,7 @@ class CompanySimulator:
         
         # 3. Compare with ground truth performance
         print(f"3. Ground truth comparison:")
-        conversion_rates = self.compute_ground_truth_conversion_rates()
+        conversion_rates = self.compute_ground_truth_conversion_rates(iteration_users)
         
         # Show top actions by usage vs ground truth performance
         for action_id, count in action_usage.most_common(5):
@@ -561,20 +561,23 @@ class CompanySimulator:
             actual_reward = sum(obs.reward for obs in observations if obs.action_id == action_id) / count if count > 0 else 0
             print(f"   {action_id}: Used {count:4d} times, GT conversion: {gt_rate:.3f}, Actual reward: {actual_reward:.3f}")
     
-    def compute_ground_truth_conversion_rates(self) -> Dict[str, float]:
+    def compute_ground_truth_conversion_rates(self, users: List[MeaningfulUser]) -> Dict[str, float]:
         """
         Compute ground truth conversion rate for each action across all users.
+        
+        Args:
+            users: List of users to compute conversion rates for.
         
         Returns:
             Dictionary mapping action_id to conversion rate (0.0 to 1.0)
         """
-        if not hasattr(self, 'users') or not hasattr(self, 'current_action_bank'):
-            raise ValueError("Must initialize simulation before computing conversion rates")
+        if not users or not hasattr(self, 'current_action_bank'):
+            raise ValueError("Must provide users and initialize action bank before computing conversion rates")
         
         print("⚡ Computing ground truth conversion rates (vectorized)...")
         
         # Use vectorized batch calculation for massive speedup
-        utility_matrix = self.ground_truth.calculate_utility_batch(self.users, self.current_action_bank)
+        utility_matrix = self.ground_truth.calculate_utility_batch(users, self.current_action_bank)
         
         # Calculate conversion rates (mean utility for each action across all users)
         conversion_rates = {}
@@ -584,16 +587,16 @@ class CompanySimulator:
         
         return conversion_rates
     
-    def print_ground_truth_analysis(self):
+    def print_ground_truth_analysis(self, users: List[MeaningfulUser]):
         """Print ground truth conversion rates and top performing users for all actions."""
         print("\n=== Ground Truth Action Analysis ===")
         
-        conversion_rates = self.compute_ground_truth_conversion_rates()
+        conversion_rates = self.compute_ground_truth_conversion_rates(users)
         
         # Sort actions by conversion rate
         sorted_actions = sorted(conversion_rates.items(), key=lambda x: x[1], reverse=True)
-        
-        print(f"Conversion rates across {len(self.users)} users:")
+            
+        print(f"Conversion rates across {len(users)} users:")
         print("-" * 80)
         
         for action_id, conversion_rate in sorted_actions:
@@ -607,7 +610,7 @@ class CompanySimulator:
             
             # Find top performing users for this action
             user_utilities = []
-            for user in self.users:
+            for user in users:
                 utility = self.ground_truth.calculate_utility(user, action)
                 user_utilities.append((user, utility))
             
@@ -658,8 +661,13 @@ class CompanySimulator:
         
         # Print ground truth analysis for the new action bank (end-of-iteration)
         print(f"\n🔄 Post-Algorithm Analysis (End of Iteration {iteration}):")
-        if self.users:  # Only if users have been initialized
-            self._print_ground_truth_preferences(self.users)
+        # Load users from saved file for this iteration
+        users_file = os.path.join(self.results_dir, f"iteration_{iteration}", "users", "users.json")
+        if os.path.exists(users_file):
+            loaded_users = self.user_generator.load_users(users_file)
+            self._print_ground_truth_preferences(loaded_users)
+        else:
+            print("  Users file not found - skipping ground truth analysis")
         
         # Save the new action bank
         iteration_dir = os.path.join(self.results_dir, f"iteration_{iteration}")
@@ -689,6 +697,7 @@ class CompanySimulator:
             # Use action text as unique identifier (could also use embedding hash)
             existing_action_map[action.text] = action.action_id
         
+        
         # Assign IDs to new actions, preserving existing IDs where possible
         id_preserved_count = 0
         id_reassigned_count = 0
@@ -714,12 +723,14 @@ class CompanySimulator:
                 next_new_id += 1
                 new_actions_count += 1
         
-        # Handle any remaining actions that need reassignment
+        # Handle any remaining actions that need reassignment (should only be new actions without IDs)
         for action in new_action_bank:
-            if action.action_id is None or action.action_id in used_ids:
+            if action.action_id is None:  # FIXED: Only reassign actions with no ID
+                old_id = action.action_id
                 while f"action_{next_new_id:04d}" in used_ids:
                     next_new_id += 1
-                action.action_id = f"action_{next_new_id:04d}"
+                new_id = f"action_{next_new_id:04d}"
+                action.action_id = new_id
                 used_ids.add(action.action_id)
                 next_new_id += 1
                 id_reassigned_count += 1
@@ -728,6 +739,7 @@ class CompanySimulator:
         print(f"    - Preserved existing IDs: {id_preserved_count}")
         print(f"    - New actions: {new_actions_count}")
         print(f"    - Reassigned IDs: {id_reassigned_count}")
+        
         
         # Update the current action bank
         self.current_action_bank = new_action_bank
@@ -769,16 +781,19 @@ class CompanySimulator:
         avg_rewards = [result['company_metrics']['avg_reward'] 
                       for result in self.iteration_results]
         
+        # Calculate total users across all iterations (assuming n_users per iteration)
+        total_users = len(self.iteration_results) * getattr(self, 'n_users', 0)
+        
         summary = {
             'total_iterations': len(self.iteration_results),
-            'total_users': len(self.users),
+            'total_users': total_users,
             'total_observations': total_observations,
             'total_cumulative_reward': total_reward,
             'overall_avg_reward': total_reward / total_observations if total_observations > 0 else 0,
             'avg_reward_by_iteration': avg_rewards,
             'final_exploration_rate': getattr(self.company_strategy, 'exploration_rate', 'N/A'),
             'company_learned': getattr(self.company_strategy, 'is_trained', True),
-            'user_segments': len(set(user.segment for user in self.users)),
+            'user_segments': 'N/A (users not stored persistently)',  # Can't calculate without persistent users
             'current_action_bank_size': len(self.current_action_bank)
         }
         

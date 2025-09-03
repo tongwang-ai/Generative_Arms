@@ -216,11 +216,11 @@ class PersonalizedMarketingAlgorithm:
                     previous_best.append(action)
                     break
         
-        # Load cumulative action bank from all previous iterations
-        cumulative_action_bank = self._load_cumulative_action_bank(iteration)
-        print(f"   Loaded cumulative action bank with {len(cumulative_action_bank)} actions")
+        # Load current action bank for this iteration (what the company is actually using)
+        current_action_bank = self._load_current_action_bank(iteration)
+        print(f"   Loaded current action bank with {len(current_action_bank)} actions")
         
-        new_action_bank = self._generate_new_action_bank(users, previous_best, cumulative_action_bank)
+        new_action_bank = self._generate_new_action_bank(users, previous_best, current_action_bank)
         generation_time = time.time() - generation_start
         print(f"   ⏱️  Action bank generation completed in {generation_time:.2f}s")
         
@@ -306,13 +306,29 @@ class PersonalizedMarketingAlgorithm:
         
         return actions
     
+    def _load_current_action_bank(self, current_iteration: int) -> List[Action]:
+        """Load the current action bank that the company is using for this iteration."""
+        # For iteration 1, load from initialization folder
+        if current_iteration == 1:
+            action_bank_file = os.path.join(self.results_dir, "initialization", "action_bank", "action_bank.json")
+        else:
+            # For iteration > 1, load the company's current action bank from this iteration
+            # (The company saves its current action bank during run_iteration)
+            action_bank_file = os.path.join(self.results_dir, f"iteration_{current_iteration}", "action_bank", "action_bank.json")
+        
+        if os.path.exists(action_bank_file):
+            return self._load_actions(action_bank_file)
+        else:
+            print(f"Warning: Action bank file not found: {action_bank_file}")
+            return []
+    
     def _load_cumulative_action_bank(self, current_iteration: int) -> List[Action]:
         """Load all action banks from previous iterations to create cumulative bank."""
         cumulative_actions = []
         seen_action_ids = set()
         
-        # Load initial action bank (iteration 0)  
-        initial_bank_file = os.path.join(self.results_dir, "iteration_0", "action_bank", "action_bank.json")
+        # Load initial action bank from initialization folder
+        initial_bank_file = os.path.join(self.results_dir, "initialization", "action_bank", "action_bank.json")
         if os.path.exists(initial_bank_file):
             initial_actions = self._load_actions(initial_bank_file)
             for action in initial_actions:
@@ -489,7 +505,7 @@ class PersonalizedMarketingAlgorithm:
     
     def _generate_new_action_bank(self, users: List[User], 
                                 previous_best: List[Action], 
-                                cumulative_action_bank: List[Action]) -> List[Action]:
+                                current_action_bank: List[Action]) -> List[Action]:
         """Generate new optimized action bank."""
         
         # If action_bank_size is 0, return empty list (no new actions)
@@ -498,14 +514,7 @@ class PersonalizedMarketingAlgorithm:
             return []
         
         if not self.reward_model.is_trained:
-            print("   Warning: Reward model not trained, using random generation")
-            # Generate random actions as fallback
-            action_pool = self.action_generator.generate_action_pool(
-                pool_size=self.config['action_bank_size'],
-                previous_best=None,
-                embedding_dim=len(previous_best[0].embedding) if previous_best else 8
-            )
-            return action_pool[:self.config['action_bank_size']]
+            raise RuntimeError("Reward model not trained")
         
         # Generate large candidate pool
         action_pool = self.action_generator.generate_action_pool(
@@ -514,13 +523,13 @@ class PersonalizedMarketingAlgorithm:
             embedding_dim=len(previous_best[0].embedding) if previous_best else 8
         )
         
-        # Select optimal subset using our algorithm (start with cumulative action bank)
+        # Select optimal subset using our algorithm (start with current action bank)
         selection_result = self.action_selector.select_actions_with_evaluation(
             action_pool=action_pool,
             action_bank_size_per_iter=self.config['action_bank_size'],
             users=users,
             reward_model=self.reward_model,
-            current_action_bank=cumulative_action_bank
+            current_action_bank=current_action_bank
         )
         
         return selection_result['selected_actions']
