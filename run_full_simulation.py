@@ -328,26 +328,11 @@ def main():
                        help='New action bank size per iteration (default: 20)')
     
     # Reward model selection
-    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'doubly_robust', 'gaussian_process', 'bayesian_neural'],
-                       default='neural', 
-                       help='Type of reward model (default: neural)')
+    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'],
+                       default='lightgbm', 
+                       help='Type of reward model (default: lightgbm)')
     parser.add_argument('--bnn_mc_samples', type=int, default=30,
                        help='MC Dropout samples for bayesian_neural (default: 30)')
-    
-    # Doubly-Robust model options
-    parser.add_argument('--dr_propensity_model', choices=['lightgbm', 'pytorch'],
-                       default='lightgbm',
-                       help='DR propensity model type (default: lightgbm)')
-    parser.add_argument('--dr_baseline_model', choices=['neural', 'lightgbm'],
-                       default='neural',
-                       help='DR baseline model type (default: neural)')
-    parser.add_argument('--dr_n_splits', type=int, default=5,
-                       help='Number of DR cross-fitting splits (default: 5)')
-    parser.add_argument('--dr_min_propensity', type=float, default=0.01,
-                       help='Minimum propensity score for clipping (default: 0.01)')
-    parser.add_argument('--dr_switch_threshold', type=float, default=0.1,
-                       help='Switch-DR variance reduction threshold (default: 0.1)')
-    # Note: time_unit parameter removed - now uses iteration-based splitting for simulation
     
     # LightGBM model options
     parser.add_argument('--lgb_n_estimators', type=int, default=100,
@@ -385,16 +370,7 @@ def main():
     })
     
     # Configure model-specific parameters
-    if args.reward_model_type == 'doubly_robust':
-        dr_config = {
-            'propensity_model_type': args.dr_propensity_model,
-            'baseline_model_type': args.dr_baseline_model,
-            'n_splits': args.dr_n_splits,
-            'min_propensity': args.dr_min_propensity,
-            'switch_dr_threshold': args.dr_switch_threshold
-        }
-        algorithm_config['dr_config'] = dr_config
-    elif args.reward_model_type == 'lightgbm':
+    if args.reward_model_type == 'lightgbm':
         # LightGBM configuration with sensible defaults
         lightgbm_config = {
             'n_estimators': getattr(args, 'lgb_n_estimators', 100),
@@ -454,7 +430,6 @@ def main():
         "ground_truth_type": args.ground_truth_type,
         "ground_truth_config": ground_truth_config,
         "reward_model_type": args.reward_model_type,
-        "dr_config": algorithm_config.get('dr_config', {}),
         "lightgbm_config": algorithm_config.get('lightgbm_config', {}),
         "algorithm_config": algorithm_config,
         "openai_api_key_provided": openai_api_key is not None

@@ -59,7 +59,7 @@ def main():
     parser.add_argument('--diversity_weight', type=float, default=0.15, help='Diversity penalty weight (default: 0.15)')
     parser.add_argument('--action_pool_size', type=int, default=2000, help='Action pool size for generation (default: 2000)')
     parser.add_argument('--action_bank_size', type=int, default=20, help='New action bank size per iteration (default: 20)')
-    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'doubly_robust', 'gaussian_process', 'bayesian_neural'], default='neural', help='Reward model type')
+    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'], default='lightgbm', help='Reward model type')
     parser.add_argument('--bnn_mc_samples', type=int, default=30, help='MC Dropout samples for bayesian_neural (default: 30)')
     parser.add_argument('--use_pca', action='store_true', default=False, help='Apply PCA to action embeddings before models')
     parser.add_argument('--pca_components', type=int, default=50, help='Number of PCA components for action embeddings (default: 50)')
