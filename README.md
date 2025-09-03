@@ -31,6 +31,7 @@ PersonalizedTargeting/
 │   ├── models/                       # User preference models (reward models)
 │   │   ├── base_user_preference_model.py      # Interface for all models
 │   │   ├── neural_user_preference_model.py    # Neural network model
+│   │   ├── bayesian_neural_user_preference_model.py  # Bayesian neural with uncertainty
 │   │   ├── lightgbm_user_preference_model.py  # LightGBM model
 │   │   ├── gaussian_process_user_preference_model.py  # GP model
 │   │   └── linear_user_preference_model.py    # Linear/logistic model
@@ -42,15 +43,22 @@ PersonalizedTargeting/
 │       └── linucb_strategy.py        # LinUCB contextual bandit
 │
 ├── results/                          # Generated results (auto-created)
-│   └── simulation_*/                 # Timestamped experiment results
-│       ├── initialization/           # Configuration and setup
-│       └── iteration_X/              # Per-iteration data and results
-│           ├── users/                # Fresh user generation per iteration
-│           ├── action_bank/          # Current marketing actions
-│           ├── observations/         # Company targeting observations
-│           └── new_action_bank/      # Algorithm-generated actions
+│   ├── simulation_*/                 # Full simulation experiment results
+│   │   ├── initialization/           # Configuration and setup
+│   │   └── iteration_X/              # Per-iteration data and results
+│   │       ├── users/                # Fresh user generation per iteration
+│   │       ├── action_bank/          # Current marketing actions
+│   │       ├── observations/         # Company targeting observations
+│   │       └── new_action_bank/      # Algorithm-generated actions
+│   └── simulation_from_data_*/       # Results from run_simulation_from_data.py
+│       ├── run_from_data_config.json # Source data dir and algorithm config
+│       ├── initialization/           # Copied from source data directory
+│       └── iteration_X/              # Algorithm results on pre-generated data
+    
 │
 ├── run_full_simulation.py            # Main entry point
+├── generate_simulation_data.py       # Generate reproducible simulation data
+├── run_simulation_from_data.py       # Run algorithms on pre-generated data
 ├── test_preference_model.py          # User preference model testing
 └── requirements.txt                  # Python dependencies
 ```
@@ -84,10 +92,10 @@ Simulates realistic company behavior for validation:
 #### 3. Reward Models (`src/models/`)
 Various approaches to learn user preferences:
 - **Neural Model**: Feedforward network with user-action feature engineering
-- **Bayesian Neural (MC Dropout)**: Predictive mean with uncertainty (std) via Monte Carlo Dropout; uncertainty is logged and available for analysis
-- **Doubly-Robust Model**: Handles selection bias from targeting strategies
+- **Bayesian Neural Model**: MC Dropout-based neural network that provides both predictions and uncertainty estimates
 - **LightGBM Model**: Gradient boosting for tabular data
-- **Linear/Gaussian Process**: Baseline and advanced statistical models
+- **Gaussian Process**: Probabilistic model with uncertainty quantification
+- **Linear Model**: Baseline logistic regression
 
 #### 4. Targeting Strategies (`src/strategies/`)
 Company strategy implementations:
@@ -133,9 +141,9 @@ python run_full_simulation.py \
 - `--results_dir`: Output directory (default: 'results')
 
 ### Reward Models
-- `--reward_model_type`: Choose from 'neural', 'lightgbm', 'doubly_robust', 'gaussian_process', 'bayesian_neural'
+- `--reward_model_type`: Choose from 'neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'
 - For LightGBM: `--lgb_n_estimators`, `--lgb_learning_rate`, `--lgb_num_leaves`
-- For Bayesian Neural: `--bnn_mc_samples` (MC Dropout samples, default: 30)
+- For Bayesian Neural: `--bnn_mc_samples` (MC Dropout samples for uncertainty, default: 30)
 
 ### Company Strategy
 - `--company_strategy`: Choose from 'linucb', 'bootstrapped_dqn', 'legacy'
@@ -149,41 +157,66 @@ python run_full_simulation.py \
 ### Algorithm Tuning
 - `--diversity_weight`: Penalty for similar actions (default: 0.15)
 - `--action_pool_size`: Candidate actions to generate (default: 2000)
-- `--action_bank_size`: Final action bank size (default: 20)
+- `--action_bank_size`: Final action bank size per iteration (default: 20)
+- `--use_uncertainty`: Enable uncertainty-aware action selection (for Bayesian models)
+- `--uncertainty_weight`: Weight for uncertainty in action selection (default: 0.1)
 
 ## Reproducible Data Workflow
 
-To compare different algorithms fairly, generate data once and reuse it for multiple runs.
+For fair algorithm comparisons, generate simulation data once and reuse it across multiple runs.
 
-1) Generate data only (initial action bank + users for 4 iterations):
+### 1. Generate Simulation Data
+
+Create reproducible datasets with fixed user populations and initial action banks:
 
 ```bash
+# Basic data generation
 python generate_simulation_data.py \
   --users 10000 \
   --iterations 4 \
   --initial_actions 30
+
+# Advanced data generation with custom ground truth
+python generate_simulation_data.py \
+  --users 1000 \
+  --iterations 5 \
+  --initial_actions 25 \
+  --openai_api_key your_api_key
 ```
 
-- Output folder: `data/simulation_data/<unique_id>`
-- Contents include `initialization/action_bank/action_bank.json` and `iteration_X/users/users.json`
+**Output Structure:**
+```
+data/simulation_data/<unique_id>/
+├── data_config.json                 # Generation parameters
+├── initialization/
+│   └── action_bank/action_bank.json # Initial marketing actions
+└── iteration_X/
+    └── users/users.json             # User populations per iteration
+```
 
-2) Run simulation + algorithm from a generated data folder:
+### 2. Run Algorithms on Generated Data
+
+Execute different algorithms on the same dataset for fair comparison:
 
 ```bash
+# Baseline (same action bank across all stages)
 python run_simulation_from_data.py \
   --data_dir data/simulation_data/<unique_id> \
   --company_strategy linucb \
-  --reward_model_type bayesian_neural \
-  --bnn_mc_samples 30 \
-  --action_bank_size 10
+  --reward_model_type lightgbm \
+  --use_pca \
+  --pca_components 128 \
+  --action_bank_size 0
+
+# Test LightGBM approach
+python run_simulation_from_data.py \
+  --data_dir data/simulation_data/<unique_id> \
+  --company_strategy linucb \
+  --reward_model_type lightgbm \
+  --use_pca \
+  --pca_components 128 \
+  --action_bank_size 5
 ```
-
-- Results are saved under `results/simulation_from_data_*` (timestamped)
-- The same user cohorts and initial action bank are used across runs, enabling apples-to-apples comparisons
-
-Notes:
-- Ground truth model type and key settings from data generation are recorded in `data_config.json` and respected when running from data.
-- If `OPENAI_API_KEY` is not set, fallback embedding and action generation are used (templates + deterministic hash-based embeddings).
 
 ## Understanding Results
 
@@ -207,6 +240,8 @@ results/simulation_YYYYMMDD_HHMMSS/
 - **Algorithm Expected Value**: Predicted performance of new action bank
 - **Ground Truth Correlation**: How well the reward model predicts true preferences
 - **Learning Progress**: Reward improvement over iterations
+- **Uncertainty Analysis**: For Bayesian models, tracks prediction confidence and exploration vs exploitation
+- **Action Bank Evolution**: Sequential action ID tracking and LinUCB knowledge preservation
 
 ## Development and Testing
 

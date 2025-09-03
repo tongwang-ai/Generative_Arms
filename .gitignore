@@ -43,6 +43,7 @@ venv.bak/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+data_explore.ipynb
 
 # Results and large data files
 data/
