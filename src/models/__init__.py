@@ -27,6 +27,7 @@ Usage:
 from .base_user_preference_model import BaseUserPreferenceModel, UserPreferenceModelWrapper
 from .lightgbm_user_preference_model import LightGBMUserPreferenceModel
 from .neural_user_preference_model import NeuralUserPreferenceModel
+from .bayesian_neural_user_preference_model import BayesianNeuralUserPreferenceModel
 from .linear_user_preference_model import LinearUserPreferenceModel
 from .gaussian_process_user_preference_model import GaussianProcessUserPreferenceModel
 from .user_preference_model_tester import UserPreferenceModelTester
@@ -36,6 +37,7 @@ __all__ = [
     'UserPreferenceModelWrapper',
     'LightGBMUserPreferenceModel',
     'NeuralUserPreferenceModel', 
+    'BayesianNeuralUserPreferenceModel',
     'LinearUserPreferenceModel',
     'GaussianProcessUserPreferenceModel',
     'UserPreferenceModelTester'

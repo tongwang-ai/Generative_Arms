@@ -127,3 +127,12 @@ class GaussianProcessUserPreferenceModel(BaseUserPreferenceModel):
         # Get GP prediction probability
         prob = self.gp_model.predict_proba(features)[0, 1]
         return float(prob)
+
+    def predict_with_uncertainty(self, user: User, action: Action) -> tuple:
+        """
+        Approximate uncertainty for GP classifier by Bernoulli variance p*(1-p).
+        """
+        p = self.predict(user, action)
+        # Standard deviation of Bernoulli as a proxy
+        std = float(np.sqrt(max(0.0, p * (1.0 - p))))
+        return float(p), std

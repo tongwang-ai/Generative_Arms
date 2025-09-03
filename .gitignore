@@ -45,6 +45,7 @@ venv.bak/
 .ipynb_checkpoints
 
 # Results and large data files
+data/
 results/
 reward_model_results/
 *.pkl

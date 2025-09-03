@@ -326,12 +326,8 @@ class CompanySimulator:
         iteration_dir = os.path.join(self.results_dir, f"iteration_{iteration}")
         os.makedirs(iteration_dir, exist_ok=True)
         
-        # Generate NEW users for this iteration
-        print(f"Generating {self.n_users} NEW users for iteration {iteration}...")
-        user_gen_start = time.time()
+        # Generate users for this iteration (logging handled inside generator)
         iteration_users = self.user_generator.generate_users(self.n_users)
-        user_gen_time = time.time() - user_gen_start
-        print(f"   ⏱️  User generation completed in {user_gen_time:.2f}s")
         
         # Save iteration users
         users_dir = os.path.join(iteration_dir, "users")

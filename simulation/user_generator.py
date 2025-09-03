@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import time
 from typing import List, Dict, Any
 import json
 from dataclasses import dataclass
@@ -82,6 +83,8 @@ class MeaningfulUserGenerator:
     def generate_users(self, n_users: int) -> List[MeaningfulUser]:
         """
         Generate users with meaningful features based on realistic archetypes.
+        Handles its own logging so callers don't need to print generation messages.
+        When monkeypatched to return pre-generated users, these logs are naturally suppressed.
         
         Args:
             n_users: Number of users to generate
@@ -89,6 +92,8 @@ class MeaningfulUserGenerator:
         Returns:
             List of MeaningfulUser objects
         """
+        print(f"Generating {n_users} NEW users...")
+        _start_time = time.time()
         users = []
         
         # Determine how many users of each archetype to create
@@ -146,6 +151,8 @@ class MeaningfulUserGenerator:
             
             users.append(user)
         
+        _elapsed = time.time() - _start_time
+        print(f"   ⏱️  User generation completed in {_elapsed:.2f}s")
         return users
     
     def save_users(self, users: List[MeaningfulUser], filepath: str):

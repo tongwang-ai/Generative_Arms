@@ -120,6 +120,30 @@ class BaseUserPreferenceModel(ABC):
         for user, action in zip(users, actions):
             predictions.append(self.predict(user, action))
         return np.array(predictions)
+
+    # --- Uncertainty-aware prediction (optional) ---
+    def predict_with_uncertainty(self, user: User, action: Action) -> tuple:
+        """
+        Optional: Predict (mean, uncertainty) for a user-action pair.
+        Default implementation returns deterministic prediction with zero uncertainty.
+        Subclasses that support uncertainty should override this.
+        """
+        mean = self.predict(user, action)
+        return float(mean), 0.0
+
+    def predict_batch_with_uncertainty(self, users: List[User], actions: List[Action]) -> tuple:
+        """
+        Optional batched uncertainty predictions.
+        Returns (means: np.ndarray, stds: np.ndarray) both shaped (N,).
+        Default falls back to per-item calls.
+        """
+        means = []
+        stds = []
+        for user, action in zip(users, actions):
+            m, s = self.predict_with_uncertainty(user, action)
+            means.append(m)
+            stds.append(s)
+        return np.array(means), np.array(stds)
     
     def predict_with_diversity_penalty(self, user: User, action: Action, 
                                      current_bank: List[Action]) -> float:

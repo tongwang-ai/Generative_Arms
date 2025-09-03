@@ -328,9 +328,11 @@ def main():
                        help='New action bank size per iteration (default: 20)')
     
     # Reward model selection
-    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'doubly_robust'],
+    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'doubly_robust', 'gaussian_process', 'bayesian_neural'],
                        default='neural', 
                        help='Type of reward model (default: neural)')
+    parser.add_argument('--bnn_mc_samples', type=int, default=30,
+                       help='MC Dropout samples for bayesian_neural (default: 30)')
     
     # Doubly-Robust model options
     parser.add_argument('--dr_propensity_model', choices=['lightgbm', 'pytorch'],
@@ -378,7 +380,8 @@ def main():
         'diversity_weight': args.diversity_weight,
         'action_pool_size': args.action_pool_size,
         'action_bank_size': args.action_bank_size,
-        'reward_model_type': args.reward_model_type
+        'reward_model_type': args.reward_model_type,
+        'bnn_mc_samples': getattr(args, 'bnn_mc_samples', 30)
     })
     
     # Configure model-specific parameters

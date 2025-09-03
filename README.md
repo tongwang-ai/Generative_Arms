@@ -84,6 +84,7 @@ Simulates realistic company behavior for validation:
 #### 3. Reward Models (`src/models/`)
 Various approaches to learn user preferences:
 - **Neural Model**: Feedforward network with user-action feature engineering
+- **Bayesian Neural (MC Dropout)**: Predictive mean with uncertainty (std) via Monte Carlo Dropout; uncertainty is logged and available for analysis
 - **Doubly-Robust Model**: Handles selection bias from targeting strategies
 - **LightGBM Model**: Gradient boosting for tabular data
 - **Linear/Gaussian Process**: Baseline and advanced statistical models
@@ -117,7 +118,8 @@ python run_full_simulation.py \
     --initial_actions 30 \
     --action_bank_size 10 \
     --company_strategy linucb \
-    --reward_model_type lightgbm \
+    --reward_model_type bayesian_neural \
+    --bnn_mc_samples 30 \
     --use_pca \
     --pca_components 128
 ```
@@ -131,8 +133,9 @@ python run_full_simulation.py \
 - `--results_dir`: Output directory (default: 'results')
 
 ### Reward Models
-- `--reward_model_type`: Choose from 'neural', 'lightgbm'
+- `--reward_model_type`: Choose from 'neural', 'lightgbm', 'doubly_robust', 'gaussian_process', 'bayesian_neural'
 - For LightGBM: `--lgb_n_estimators`, `--lgb_learning_rate`, `--lgb_num_leaves`
+- For Bayesian Neural: `--bnn_mc_samples` (MC Dropout samples, default: 30)
 
 ### Company Strategy
 - `--company_strategy`: Choose from 'linucb', 'bootstrapped_dqn', 'legacy'
@@ -147,6 +150,40 @@ python run_full_simulation.py \
 - `--diversity_weight`: Penalty for similar actions (default: 0.15)
 - `--action_pool_size`: Candidate actions to generate (default: 2000)
 - `--action_bank_size`: Final action bank size (default: 20)
+
+## Reproducible Data Workflow
+
+To compare different algorithms fairly, generate data once and reuse it for multiple runs.
+
+1) Generate data only (initial action bank + users for 4 iterations):
+
+```bash
+python generate_simulation_data.py \
+  --users 10000 \
+  --iterations 4 \
+  --initial_actions 30
+```
+
+- Output folder: `data/simulation_data/<unique_id>`
+- Contents include `initialization/action_bank/action_bank.json` and `iteration_X/users/users.json`
+
+2) Run simulation + algorithm from a generated data folder:
+
+```bash
+python run_simulation_from_data.py \
+  --data_dir data/simulation_data/<unique_id> \
+  --company_strategy linucb \
+  --reward_model_type bayesian_neural \
+  --bnn_mc_samples 30 \
+  --action_bank_size 10
+```
+
+- Results are saved under `results/simulation_from_data_*` (timestamped)
+- The same user cohorts and initial action bank are used across runs, enabling apples-to-apples comparisons
+
+Notes:
+- Ground truth model type and key settings from data generation are recorded in `data_config.json` and respected when running from data.
+- If `OPENAI_API_KEY` is not set, fallback embedding and action generation are used (templates + deterministic hash-based embeddings).
 
 ## Understanding Results
 

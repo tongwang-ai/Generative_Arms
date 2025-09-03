@@ -13,7 +13,13 @@ import scipy.stats
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.models import LightGBMUserPreferenceModel, NeuralUserPreferenceModel, LinearUserPreferenceModel
+from src.models import (
+    LightGBMUserPreferenceModel,
+    NeuralUserPreferenceModel,
+    LinearUserPreferenceModel,
+    GaussianProcessUserPreferenceModel,
+    BayesianNeuralUserPreferenceModel,
+)
 from src.selection.action_generator import ActionGenerator
 from src.selection.action_selector import ActionSelector
 from src.data.entities import User, Action
@@ -91,8 +97,28 @@ class PersonalizedMarketingAlgorithm:
                 use_pca=pca_config.get('use_pca', False),
                 pca_components=pca_config.get('pca_components', 50)
             )
+        elif reward_model_type == 'gaussian_process':
+            self.reward_model = GaussianProcessUserPreferenceModel(
+                diversity_weight=self.config['diversity_weight'],
+                random_seed=self.config['random_seed'],
+                use_pca=pca_config.get('use_pca', False),
+                pca_components=pca_config.get('pca_components', 50)
+            )
+        elif reward_model_type == 'bayesian_neural':
+            self.reward_model = BayesianNeuralUserPreferenceModel(
+                diversity_weight=self.config['diversity_weight'],
+                random_seed=self.config['random_seed'],
+                use_pca=pca_config.get('use_pca', False),
+                pca_components=pca_config.get('pca_components', 50),
+                hidden_dims=self.config.get('hidden_dims', [128, 64]),
+                dropout_rate=self.config.get('dropout_rate', 0.3),
+                learning_rate=self.config.get('learning_rate', 0.001),
+                mc_samples=self.config.get('bnn_mc_samples', 30)
+            )
         else:
-            raise ValueError(f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear")
+            raise ValueError(
+                f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear, gaussian_process, bayesian_neural"
+            )
         
         self.action_generator = ActionGenerator(
             random_seed=self.config['random_seed'],
@@ -220,14 +246,16 @@ class PersonalizedMarketingAlgorithm:
         current_action_bank = self._load_current_action_bank(iteration)
         print(f"   Loaded current action bank with {len(current_action_bank)} actions")
         
-        new_action_bank = self._generate_new_action_bank(users, previous_best, current_action_bank)
+        selection_result = self._generate_new_action_bank(users, previous_best, current_action_bank)
+        new_action_bank = selection_result['selected_actions']
         generation_time = time.time() - generation_start
         print(f"   ⏱️  Action bank generation completed in {generation_time:.2f}s")
         
         # 7. Evaluate the new action bank
         print("7. Evaluating new action bank...")
         bank_eval_start = time.time()
-        evaluation_results = self._evaluate_action_bank(new_action_bank, users)
+        # Use selection's evaluation if provided, otherwise compute
+        evaluation_results = selection_result.get('evaluation') or self._evaluate_action_bank(new_action_bank, users)
         bank_eval_time = time.time() - bank_eval_start
         print(f"   ⏱️  Action bank evaluation completed in {bank_eval_time:.2f}s")
         
@@ -252,7 +280,8 @@ class PersonalizedMarketingAlgorithm:
             'evaluation_results': evaluation_results,
             'ground_truth_results': ground_truth_results,
             'previous_best_actions': previous_best,
-            'observations_processed': len(all_observations)
+            'observations_processed': len(all_observations),
+            'selection_uncertainty': selection_result.get('uncertainty')
         })
         save_time = time.time() - save_start
         print(f"   ⏱️  Results saving completed in {save_time:.2f}s")
@@ -505,13 +534,33 @@ class PersonalizedMarketingAlgorithm:
     
     def _generate_new_action_bank(self, users: List[User], 
                                 previous_best: List[Action], 
-                                current_action_bank: List[Action]) -> List[Action]:
-        """Generate new optimized action bank."""
+                                current_action_bank: List[Action]) -> Dict[str, Any]:
+        """Generate new optimized action bank and include selection diagnostics (e.g., uncertainty).
+        Always returns a dictionary with selection and evaluation info.
+        """
         
-        # If action_bank_size is 0, return empty list (no new actions)
+        # If action_bank_size is 0, keep current bank and return evaluation/diagnostics
         if self.config['action_bank_size'] == 0:
-            print("   action_bank_size=0: Returning empty action bank (no changes)")
-            return []
+            print("   action_bank_size=0: Returning current action bank unchanged")
+            evaluation = self._evaluate_action_bank(current_action_bank, users)
+            # Include uncertainty summaries if supported
+            uncertainty = None
+            try:
+                uncertainty = self.action_selector._summarize_uncertainty(current_action_bank, users, self.reward_model)
+            except Exception:
+                pass
+            return {
+                'selected_actions': current_action_bank,
+                'evaluation': evaluation,
+                'uncertainty': uncertainty,
+                'selection_summary': {
+                    'pool_size': 0,
+                    'selected_count': len(current_action_bank),
+                    'users_count': len(users),
+                    'value_mode': getattr(self.action_selector, 'value_mode', 'direct_reward'),
+                    'diversity_weight': getattr(self.reward_model, 'diversity_weight', None)
+                }
+            }
         
         if not self.reward_model.is_trained:
             raise RuntimeError("Reward model not trained")
@@ -531,8 +580,7 @@ class PersonalizedMarketingAlgorithm:
             reward_model=self.reward_model,
             current_action_bank=current_action_bank
         )
-        
-        return selection_result['selected_actions']
+        return selection_result
     
     def _evaluate_action_bank(self, action_bank: List[Action], 
                             users: List[User]) -> Dict[str, Any]:
@@ -623,6 +671,7 @@ class PersonalizedMarketingAlgorithm:
             'ground_truth_results': results.get('ground_truth_results', {}),
             'previous_best_count': len(results['previous_best_actions']),
             'observations_processed': results['observations_processed'],
+            'selection_uncertainty': results.get('selection_uncertainty'),
             'files_created': {
                 'new_action_bank': new_action_bank_file,
                 'reward_model': reward_model_file,

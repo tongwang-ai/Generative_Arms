@@ -450,10 +450,13 @@ class ActionSelector:
         """
         selected_actions = self.select_actions(action_pool, action_bank_size_per_iter, users, reward_model, current_action_bank, control_action)
         evaluation = self.evaluate_action_bank(selected_actions, users, reward_model, control_action)
+        # Compute uncertainty summaries if the model supports it
+        uncertainty = self._summarize_uncertainty(selected_actions, users, reward_model)
         
         return {
             'selected_actions': selected_actions,
             'evaluation': evaluation,
+            'uncertainty': uncertainty,
             'selection_summary': {
                 'pool_size': len(action_pool),
                 'selected_count': len(selected_actions),
@@ -461,4 +464,56 @@ class ActionSelector:
                 'value_mode': self.value_mode,
                 'diversity_weight': reward_model.diversity_weight
             }
+        }
+
+    def _summarize_uncertainty(self, selected_actions: List[Action], users: List[User],
+                               reward_model: BaseUserPreferenceModel, max_users: int = 200) -> Dict[str, Any]:
+        """
+        If available, compute simple uncertainty summaries for selected actions.
+        Returns a lightweight dict suitable for logging without affecting selection.
+        """
+        # Detect if uncertainty is supported
+        supports_uncertainty = hasattr(reward_model, 'predict_with_uncertainty')
+        if not supports_uncertainty or not selected_actions or not users:
+            return {
+                'supported': False,
+                'per_action': [],
+                'sampled_users': 0,
+                'note': 'Model does not provide uncertainty or empty inputs.'
+            }
+
+        # Limit users for efficiency
+        sampled_users = users[:max(1, min(max_users, len(users)))]
+
+        per_action = []
+        for action in selected_actions:
+            stds = []
+            for u in sampled_users:
+                # Fallback is handled by base class which returns (mean, 0.0)
+                _, s = reward_model.predict_with_uncertainty(u, action)
+                stds.append(float(s))
+
+            if stds:
+                arr = np.array(stds)
+                per_action.append({
+                    'action_id': action.action_id,
+                    'mean_std': float(arr.mean()),
+                    'median_std': float(np.median(arr)),
+                    'max_std': float(arr.max()),
+                    'n_users': len(stds)
+                })
+            else:
+                per_action.append({
+                    'action_id': action.action_id,
+                    'mean_std': 0.0,
+                    'median_std': 0.0,
+                    'max_std': 0.0,
+                    'n_users': 0
+                })
+
+        return {
+            'supported': True,
+            'per_action': per_action,
+            'sampled_users': len(sampled_users),
+            'note': 'Uncertainty not used for selection yet.'
         }
