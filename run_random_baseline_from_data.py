@@ -35,7 +35,7 @@ import numpy as np
 
 from simulation.company_simulator import CompanySimulator
 from simulation.action_embedder import EmbeddedAction, OpenAIActionEmbedder
-from run_random_baseline import RandomBaselineAlgorithm
+from algorithm.random_baseline_algorithm import RandomBaselineAlgorithm
 
 
 def convert_to_embedded_action(action_data: Dict[str, Any]) -> EmbeddedAction:
