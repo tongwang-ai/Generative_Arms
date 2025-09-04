@@ -246,6 +246,56 @@ class OpenAIActionEmbedder:
         
         print(f"Embedding complete! Generated {len(embedded_actions)} embedded actions.")
         return embedded_actions
+
+    def embed_single_action(self,
+                            action_id: str,
+                            text: str,
+                            category: str = 'general',
+                            metadata: Optional[Dict[str, Any]] = None) -> EmbeddedAction:
+        """
+        Embed a single action text and return an EmbeddedAction object.
+
+        Args:
+            action_id: Identifier to assign to the embedded action
+            text: The action text to embed
+            category: Optional category label
+            metadata: Optional metadata to attach to the action
+
+        Returns:
+            EmbeddedAction with embedding populated.
+        """
+        # Generate embedding (uses OpenAI or deterministic fallback)
+        embedding = self._get_openai_embedding(text)
+
+        # Merge provided metadata with embedder metadata
+        base_metadata: Dict[str, Any] = {
+            'embedding_model': self.model if self.use_openai else 'fallback',
+            'embedding_dim': int(len(embedding)),
+            'text_length': int(len(text))
+        }
+        if metadata:
+            # Do not mutate caller-provided dict
+            combined_metadata = {**metadata, **base_metadata}
+        else:
+            combined_metadata = base_metadata
+
+        # Create and return the embedded action
+        action = EmbeddedAction(
+            action_id=action_id,
+            text=text,
+            embedding=embedding,
+            category=category,
+            metadata=combined_metadata
+        )
+
+        # Persist cache so repeated calls benefit across runs
+        try:
+            self._save_cache()
+        except Exception:
+            # Cache failures should not break the embedding path
+            pass
+
+        return action
     
     def save_embedded_actions(self, actions: List[EmbeddedAction], filepath: str):
         """Save embedded actions to JSON file."""
