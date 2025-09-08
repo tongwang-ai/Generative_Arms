@@ -89,46 +89,48 @@ class ActionSelector:
         else:
             print(f"  No actions in current bank - all users have 0.0 reward")
         
+        # Precompute reward matrix for remaining candidates: shape (n_users, n_remaining)
+        n_users = len(users)
+        n_remaining = len(remaining_actions)
+        if n_remaining == 0:
+            print("No candidates available to add; returning current action bank")
+            return selected_actions
+
+        reward_matrix = np.zeros((n_users, n_remaining), dtype=float)
+        for j, action in enumerate(remaining_actions):
+            reward_matrix[:, j] = self._compute_action_rewards_for_users(action, users, reward_model)
+
+        # Active mask to track which candidates are still available
+        active = np.ones(n_remaining, dtype=bool)
+
         for step in range(actions_to_add):
             print(f"Selection step {step + 1}/{actions_to_add}")
-            start_time = time.time()
-            
-            best_action = None
-            best_marginal_gain = float('-inf')
-            
-            # Evaluate each remaining action
-            for i, candidate_action in tqdm(enumerate(remaining_actions), total=len(remaining_actions), desc="Adding actions"):
-                marginal_gain = self.calculate_marginal_gain(
-                    candidate_action, selected_actions, users, reward_model, control_action, 
-                    current_user_max_rewards
-                )
-                
-                if marginal_gain > best_marginal_gain:
-                    best_marginal_gain = marginal_gain
-                    best_action = candidate_action
-                    
-                if (i + 1) % 20 == 0:
-                    print(f"  Evaluated {i + 1}/{len(remaining_actions)} candidates")
-            
-            # Only add actions with positive marginal gain
-            if best_action is not None and best_marginal_gain > 0:
-                selected_actions.append(best_action)
-                remaining_actions.remove(best_action)
-                
-                # Update max rewards for next iteration (incremental update)
-                new_action_rewards = self._compute_action_rewards_for_users(best_action, users, reward_model)
-                current_user_max_rewards = np.maximum(current_user_max_rewards, new_action_rewards)
-                
-                elapsed = time.time() - start_time
-                print(f"  Selected: {best_action.text[:50]}... (gain: {best_marginal_gain:.4f}, time: {elapsed:.2f}s)")
-            elif best_marginal_gain <= 0:
-                print(f"  Stopping early: best remaining action has negative/zero gain ({best_marginal_gain:.4f})")
+            step_start = time.time()
+
+            # Vectorized marginal gains for all remaining candidates
+            improvement = reward_matrix - current_user_max_rewards[:, None]
+            np.maximum(improvement, 0.0, out=improvement)
+            gains = improvement.sum(axis=0)
+            gains[~active] = -np.inf
+
+            best_idx = int(np.argmax(gains))
+            best_gain = gains[best_idx]
+
+            if not np.isfinite(best_gain) or best_gain <= 0:
+                print(f"  Stopping early: best remaining action has non-positive gain ({best_gain:.4f})")
                 print(f"  Selected {len(selected_actions)} actions (requested {actions_to_add})")
                 break
-            else:
-                print(f"  Warning: No valid action found in step {step + 1}")
-                break
-                
+
+            best_action = remaining_actions[best_idx]
+            selected_actions.append(best_action)
+            active[best_idx] = False
+
+            # Update per-user max rewards incrementally
+            current_user_max_rewards = np.maximum(current_user_max_rewards, reward_matrix[:, best_idx])
+
+            elapsed = time.time() - step_start
+            print(f"  Selected: {best_action.text[:50]}... (gain: {best_gain:.4f}, time: {elapsed:.2f}s)")
+
         print(f"Selection complete. Selected {len(selected_actions)} actions.")
         return selected_actions
     

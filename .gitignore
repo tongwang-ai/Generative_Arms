@@ -47,6 +47,7 @@ data_explore.ipynb
 
 # Results and large data files
 data/
+legacy/
 results/
 reward_model_results/
 *.pkl
