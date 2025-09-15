@@ -133,7 +133,7 @@ Generate {target_count} exploit strategy messages now:"""
 
         try:
             response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-4.1",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=600,
                 temperature=0.7
@@ -236,7 +236,7 @@ Generate {target_count} exploratory strategy messages now:"""
 
         try:
             response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-4.1",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=600,
                 temperature=0.9  # Higher temperature for more creativity
@@ -347,7 +347,7 @@ Generate {target_count} targeted strategy messages now:"""
 
         try:
             response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-4.1",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=600,
                 temperature=0.8

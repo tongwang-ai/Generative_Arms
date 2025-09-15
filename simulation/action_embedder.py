@@ -460,7 +460,7 @@ Generate {count} marketing messages for {product_focus} now:"""
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model="gpt-5",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
                 temperature=0.8
