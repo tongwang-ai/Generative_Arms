@@ -328,7 +328,7 @@ def main():
                        help='New action bank size per iteration (default: 20)')
     
     # Reward model selection
-    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'],
+    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'],
                        default='lightgbm', 
                        help='Type of reward model (default: lightgbm)')
     parser.add_argument('--bnn_mc_samples', type=int, default=30,

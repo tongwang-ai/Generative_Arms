@@ -19,6 +19,7 @@ from src.models import (
     LinearUserPreferenceModel,
     GaussianProcessUserPreferenceModel,
     BayesianNeuralUserPreferenceModel,
+    FTTransformerUserPreferenceModel,
 )
 from src.selection.action_generator import ActionGenerator
 from src.selection.action_selector import ActionSelector
@@ -115,9 +116,29 @@ class PersonalizedMarketingAlgorithm:
                 learning_rate=self.config.get('learning_rate', 0.001),
                 mc_samples=self.config.get('bnn_mc_samples', 30)
             )
+        elif reward_model_type == 'ft_transformer':
+            # New FT-Transformer based model for tabular user features
+            self.reward_model = FTTransformerUserPreferenceModel(
+                diversity_weight=self.config['diversity_weight'],
+                random_seed=self.config['random_seed'],
+                # FT-Transformer hyperparameters (with sensible defaults)
+                fusion_type=self.config.get('fusion_type', 'concat'),  # 'concat' or 'attention'
+                hidden_dim=self.config.get('hidden_dim', 128),
+                n_heads=self.config.get('n_heads', 4),
+                n_layers=self.config.get('n_layers', 2),
+                dropout_rate=self.config.get('dropout_rate', 0.1),
+                batch_size=self.config.get('batch_size', 128),
+                epochs=self.config.get('epochs', 50),
+                patience=self.config.get('patience', 8),
+                learning_rate=self.config.get('learning_rate', 1e-3),
+                weight_decay=self.config.get('weight_decay', 1e-4),
+                # PCA settings for action embeddings (optional)
+                use_pca=pca_config.get('use_pca', False),
+                pca_components=pca_config.get('pca_components', 256)
+            )
         else:
             raise ValueError(
-                f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear, gaussian_process, bayesian_neural"
+                f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear, gaussian_process, bayesian_neural, ft_transformer"
             )
         
         self.action_generator = ActionGenerator(
@@ -469,7 +490,7 @@ class PersonalizedMarketingAlgorithm:
         ground_truth = create_ground_truth_utility(
             ground_truth_type="mixture_of_experts",
             random_seed=self.config['random_seed'],
-            user_dim=8,
+            user_dim=self.config.get('user_dim', 8),
             action_dim=action_dim
         )
         

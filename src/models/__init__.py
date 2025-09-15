@@ -31,6 +31,7 @@ from .bayesian_neural_user_preference_model import BayesianNeuralUserPreferenceM
 from .linear_user_preference_model import LinearUserPreferenceModel
 from .gaussian_process_user_preference_model import GaussianProcessUserPreferenceModel
 from .user_preference_model_tester import UserPreferenceModelTester
+from .ft_transformer_user_preference_model import FTTransformerUserPreferenceModel
 
 __all__ = [
     'BaseUserPreferenceModel', 
@@ -40,5 +41,6 @@ __all__ = [
     'BayesianNeuralUserPreferenceModel',
     'LinearUserPreferenceModel',
     'GaussianProcessUserPreferenceModel',
-    'UserPreferenceModelTester'
+    'UserPreferenceModelTester',
+    'FTTransformerUserPreferenceModel'
 ]

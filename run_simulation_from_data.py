@@ -59,7 +59,7 @@ def main():
     parser.add_argument('--diversity_weight', type=float, default=0.15, help='Diversity penalty weight (default: 0.15)')
     parser.add_argument('--action_pool_size', type=int, default=2000, help='Action pool size for generation (default: 2000)')
     parser.add_argument('--action_bank_size', type=int, default=20, help='New action bank size per iteration (default: 20)')
-    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'], default='lightgbm', help='Reward model type')
+    parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'], default='lightgbm', help='Reward model type')
     parser.add_argument('--bnn_mc_samples', type=int, default=30, help='MC Dropout samples for bayesian_neural (default: 30)')
     parser.add_argument('--use_pca', action='store_true', default=False, help='Apply PCA to action embeddings before models')
     parser.add_argument('--pca_components', type=int, default=50, help='Number of PCA components for action embeddings (default: 50)')
@@ -99,10 +99,27 @@ def main():
     if args.use_pca:
         algorithm_config['pca_config'] = {'use_pca': True, 'pca_components': args.pca_components}
 
+    # Detect user feature dimensionality from first iteration users, if present
+    detected_user_dim = None
+    first_users_file = os.path.join(args.data_dir, 'iteration_1', 'users', 'users.json')
+    try:
+        if os.path.exists(first_users_file):
+            with open(first_users_file, 'r') as f:
+                users_obj = json.load(f)
+            if users_obj.get('users'):
+                fv = users_obj['users'][0].get('feature_vector')
+                if isinstance(fv, list):
+                    detected_user_dim = int(len(fv))
+    except Exception:
+        detected_user_dim = None
+
+    if detected_user_dim:
+        algorithm_config['user_dim'] = detected_user_dim
+
     ground_truth_type = (data_cfg.get('ground_truth') or {}).get('type', 'mixture_of_experts')
     ground_truth_config = (data_cfg.get('ground_truth') or {}).get('config', {})
     ground_truth_config['action_dim'] = action_dim
-    ground_truth_config['user_dim'] = 8
+    ground_truth_config['user_dim'] = detected_user_dim or 8
 
     # Build a fresh results directory for this run
     timestamp = datetime.now().strftime("from_data_%Y%m%d_%H%M%S")
@@ -225,4 +242,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

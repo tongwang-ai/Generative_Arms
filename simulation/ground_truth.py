@@ -108,6 +108,9 @@ class MixtureOfExpertsUtility(GroundTruthUtility):
         self.n_experts = n_experts
         self.diversity_regularization = diversity_regularization
         self.max_preference_share = max_preference_share
+        # Persist expected dims for robustness
+        self.user_dim = user_dim
+        self.action_dim = action_dim
         
         # Generate expert weight matrices with better diversity
         self.expert_weights = []
@@ -130,11 +133,25 @@ class MixtureOfExpertsUtility(GroundTruthUtility):
         # Track utilities for diversity constraint
         self._utility_history = {}
     
+    def _coerce_user_features(self, user_features: np.ndarray) -> np.ndarray:
+        """Ensure user feature vector matches expected user_dim (crop or pad)."""
+        if user_features is None:
+            return np.zeros(self.user_dim)
+        arr = np.asarray(user_features).reshape(-1)
+        if arr.shape[0] == self.user_dim:
+            return arr
+        if arr.shape[0] > self.user_dim:
+            return arr[:self.user_dim]
+        # pad with zeros if too short
+        pad = np.zeros(self.user_dim - arr.shape[0])
+        return np.concatenate([arr, pad], axis=0)
+
     def _get_expert_probabilities(self, user_features: np.ndarray) -> np.ndarray:
         """Get expert assignment probabilities for a user."""
+        uf = self._coerce_user_features(user_features)
         logits = []
         for v in self.expert_assignment_vectors:
-            logit = np.dot(user_features, v)
+            logit = np.dot(uf, v)
             logits.append(logit)
         
         # Softmax
@@ -146,7 +163,7 @@ class MixtureOfExpertsUtility(GroundTruthUtility):
     
     def calculate_utility(self, user: MeaningfulUser, action: EmbeddedAction) -> float:
         """Calculate utility using mixture of experts with diversity constraints."""
-        user_features = user.feature_vector
+        user_features = self._coerce_user_features(user.feature_vector)
         action_embedding = action.embedding
         
         # Get expert probabilities
@@ -229,7 +246,7 @@ class MixtureOfExpertsUtility(GroundTruthUtility):
         n_actions = len(actions)
         
         # Extract features
-        user_features = np.array([user.feature_vector for user in users])
+        user_features = np.array([self._coerce_user_features(user.feature_vector) for user in users])
         action_embeddings = np.array([action.embedding for action in actions])
         
         # Calculate utilities efficiently

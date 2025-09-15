@@ -96,6 +96,7 @@ Various approaches to learn user preferences:
 - **LightGBM Model**: Gradient boosting for tabular data
 - **Gaussian Process**: Probabilistic model with uncertainty quantification
 - **Linear Model**: Baseline logistic regression
+- **FT-Transformer Model**: Transformer-based encoder for tabular user features with fusion to action embeddings
 
 #### 4. Targeting Strategies (`src/strategies/`)
 Company strategy implementations:
@@ -141,9 +142,13 @@ python run_full_simulation.py \
 - `--results_dir`: Output directory (default: 'results')
 
 ### Reward Models
-- `--reward_model_type`: Choose from 'neural', 'lightgbm', 'gaussian_process', 'bayesian_neural'
+- `--reward_model_type`: Choose from 'neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'
 - For LightGBM: `--lgb_n_estimators`, `--lgb_learning_rate`, `--lgb_num_leaves`
 - For Bayesian Neural: `--bnn_mc_samples` (MC Dropout samples for uncertainty, default: 30)
+  
+FT-Transformer notes:
+- Uses an FT-Transformer encoder for tabular user features and a lightweight MLP for action embeddings.
+- Supports `fusion_type` of `'concat'` or `'attention'` (set via algorithm config if desired).
 
 ### Company Strategy
 - `--company_strategy`: Choose from 'linucb', 'bootstrapped_dqn', 'legacy'
