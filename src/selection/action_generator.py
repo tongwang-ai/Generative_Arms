@@ -16,23 +16,17 @@ class ActionGenerator:
     Generates candidate action pools using multiple strategies.
     """
     
-    def __init__(self, random_seed: int = 42, use_llm: bool = True):
+    def __init__(self, random_seed: int = 42, use_llm: bool = True, embedder_model: Optional[str] = None):
         self.random_seed = random_seed
         self.use_llm = use_llm
         random.seed(random_seed)
         np.random.seed(random_seed)
         
-        # Initialize OpenAI embedder for LLM-based generation
+        # Initialize OpenAI embedder (required for embeddings)
+        # This will raise if OpenAI is unavailable or no API key is set
+        self.llm_embedder = OpenAIActionEmbedder(model=embedder_model or "text-embedding-3-large")
         if self.use_llm:
-            try:
-                self.llm_embedder = OpenAIActionEmbedder()
-                print("LLM-based action generation enabled")
-            except Exception as e:
-                print(f"Warning: Could not initialize LLM embedder: {e}")
-                self.use_llm = False
-                self.llm_embedder = None
-        else:
-            self.llm_embedder = None
+            print("LLM-based action generation enabled")
         
         # Base action templates for different categories
         self.base_templates = {
@@ -101,35 +95,7 @@ class ActionGenerator:
                 filled = filled.replace(f'{{{var}}}', random.choice(options))
         return filled
     
-    def _text_to_embedding(self, text: str, embedding_dim: int = 8) -> np.ndarray:
-        """Convert text to embedding vector (consistent with data simulator)."""
-        text_lower = text.lower()
-        
-        # Base embedding from text hash
-        text_hash = hash(text) % 10000
-        np.random.seed(text_hash)
-        embedding = np.random.normal(0, 1, embedding_dim)
-        
-        # Modify based on text characteristics
-        if any(word in text_lower for word in ['discount', 'sale', 'off', '%']):
-            embedding[0] += 0.5  # Promotional feature
-        
-        if any(word in text_lower for word in ['learn', 'discover', 'understand']):
-            embedding[1] += 0.5  # Educational feature
-            
-        if any(word in text_lower for word in ['join', 'community', 'share']):
-            embedding[2] += 0.5  # Social feature
-            
-        if any(word in text_lower for word in ['urgent', 'limited', 'now']):
-            embedding[3] += 0.5  # Urgency feature
-        
-        # Normalize
-        embedding = embedding / np.linalg.norm(embedding)
-        
-        # Reset random seed
-        np.random.seed(self.random_seed)
-        
-        return embedding
+    # All embeddings are produced via OpenAIActionEmbedder; no local/random embeddings.
     
     def _generate_exploit_actions(self, previous_best: List[Action], target_count: int) -> List[str]:
         """Generate actions by exploiting (varying) previous best performers."""
@@ -531,7 +497,7 @@ Generate {target_count} targeted strategy messages now:"""
     def generate_action_pool(self, pool_size: int = 200, 
                            previous_best: Optional[List[Action]] = None,
                            user_segments: Optional[List[str]] = None,
-                           embedding_dim: int = 8) -> List[Action]:
+                           embed_batch_size: int = 500) -> List[Action]:
         """
         Generate a large candidate action pool using multiple strategies.
         
@@ -568,18 +534,15 @@ Generate {target_count} targeted strategy messages now:"""
         # Remove duplicates while preserving order (enhanced deduplication)
         unique_actions = self._remove_duplicates(all_action_texts)
         
-        # Convert to Action objects with embeddings
+        # Convert to Action objects with OpenAI embeddings (batching)
+        if not getattr(self.llm_embedder, 'use_openai', False):
+            raise RuntimeError("OpenAI embeddings are required but not available. Set OPENAI_API_KEY.")
+
+        embeddings = self.llm_embedder.embed_texts_in_batch(unique_actions, batch_size=embed_batch_size)
+
         action_pool = []
-        
-        for i, text in enumerate(unique_actions):
-            # Generate embedding for this action
-            embedding = self._text_to_embedding(text, embedding_dim)
-            
-            action = Action(
-                action_id=f"gen_action_{i}",
-                text=text,
-                embedding=embedding
-            )
+        for i, (text, embedding) in enumerate(zip(unique_actions, embeddings)):
+            action = Action(action_id=f"gen_action_{i}", text=text, embedding=embedding)
             action_pool.append(action)
             
         return action_pool[:pool_size]  # Ensure we don't exceed requested size

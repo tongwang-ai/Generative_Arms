@@ -141,9 +141,20 @@ class PersonalizedMarketingAlgorithm:
                 f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear, gaussian_process, bayesian_neural, ft_transformer"
             )
         
+        # Choose embedding model to match configured action_dim to keep dimensions consistent
+        action_dim_cfg = int(self.config.get('action_dim', 3072))
+        if action_dim_cfg == 3072:
+            embedder_model = 'text-embedding-3-large'
+        elif action_dim_cfg == 1536:
+            # Prefer text-embedding-3-small for 1536-dim
+            embedder_model = 'text-embedding-3-small'
+        else:
+            embedder_model = 'text-embedding-3-large'
+
         self.action_generator = ActionGenerator(
             random_seed=self.config['random_seed'],
-            use_llm=True  # Enable LLM-based action generation
+            use_llm=True,  # Enable LLM-based action generation
+            embedder_model=embedder_model
         )
         
         self.action_selector = ActionSelector(
@@ -590,7 +601,6 @@ class PersonalizedMarketingAlgorithm:
         action_pool = self.action_generator.generate_action_pool(
             pool_size=self.config['action_pool_size'],
             previous_best=previous_best,
-            embedding_dim=len(previous_best[0].embedding) if previous_best else 8
         )
         
         # Select optimal subset using our algorithm (start with current action bank)

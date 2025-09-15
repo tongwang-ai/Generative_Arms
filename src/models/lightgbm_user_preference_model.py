@@ -37,7 +37,7 @@ class LightGBMUserPreferenceModel(BaseUserPreferenceModel):
         
         # Extract features and labels
         user_features = np.vstack(observations_df['user_features'].values)  # (N, 8)
-        action_embeddings = np.vstack(observations_df['action_embedding'].values)  # (N, 1536)
+        action_embeddings = np.vstack(observations_df['action_embedding'].values)  # (N, 3072)
         rewards = observations_df['reward'].values  # (N,)
         
         print(f"LightGBM fitting on {len(observations_df)} samples")
@@ -129,6 +129,8 @@ class LightGBMUserPreferenceModel(BaseUserPreferenceModel):
             
         # Prepare features
         action_embedding = action.embedding
+        print(f"Action embedding shape in predict: {action_embedding.shape}") ###
+
         if self.use_pca:
             action_embedding = self.pca.transform(action_embedding.reshape(1, -1)).flatten()
         

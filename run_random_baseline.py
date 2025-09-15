@@ -327,7 +327,7 @@ def main():
     # Get OpenAI API key
     openai_api_key = args.openai_api_key or os.getenv('OPENAI_API_KEY')
     if not openai_api_key:
-        print("Warning: No OpenAI API key provided. Using fallback embeddings.")
+        raise RuntimeError("OPENAI_API_KEY is required. Set it in the environment or pass --openai_api_key.")
     
     # Create unique timestamped results directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

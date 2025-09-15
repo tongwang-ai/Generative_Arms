@@ -84,7 +84,7 @@ class CompanySimulator:
         # Use dimensions from config (set by run_full_simulation.py)
         # Fall back to detection if not provided
         if 'action_dim' not in ground_truth_config:
-            embedding_model = self.action_embedder.model if self.action_embedder.use_openai else 'fallback'
+            embedding_model = self.action_embedder.model
             if embedding_model == "text-embedding-3-large":
                 action_dim = 3072
             elif embedding_model == "text-embedding-ada-002":
@@ -169,7 +169,7 @@ class CompanySimulator:
             'n_users_per_iteration': self.n_users,
             'n_initial_actions': self.n_initial_actions,
             'initial_action_bank_size': len(self.current_action_bank),
-            'embedding_model': self.action_embedder.model if self.action_embedder.use_openai else 'fallback'
+            'embedding_model': self.action_embedder.model
         }
         
         summary_file = os.path.join(init_dir, "initialization_summary.json")

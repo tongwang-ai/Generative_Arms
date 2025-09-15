@@ -131,31 +131,27 @@ class RandomBaselineAlgorithm(PersonalizedMarketingAlgorithm):
         raw_actions = self.action_generator.generate_action_pool(
             pool_size=self.config['action_bank_size'],
             previous_best=None,
-            user_segments=None,
-            embedding_dim=8  # Placeholder; embedding will be produced by embedder
+            user_segments=None
         )
 
-        print(f"   ✅ Generated {len(raw_actions)} raw actions, embedding...")
+        print(f"   ✅ Generated {len(raw_actions)} raw actions with embeddings, converting...")
 
-        # Convert to embedded actions using the embedder
-        from simulation.action_embedder import OpenAIActionEmbedder
-
-        embedder = OpenAIActionEmbedder(api_key=os.getenv('OPENAI_API_KEY'))
+        # Convert to EmbeddedAction without re-embedding (ActionGenerator already embedded)
         embedded_actions: List[EmbeddedAction] = []
-
         for i, action in enumerate(raw_actions):
-            # Some generated Action objects may not carry category/metadata
             category = getattr(action, 'category', 'generated')
             metadata = getattr(action, 'metadata', {})
-            embedded_action = embedder.embed_single_action(
-                action_id=f"random_{len(current_action_bank) + i:04d}",
-                text=action.text,
-                category=category,
-                metadata=metadata
+            embedded_actions.append(
+                EmbeddedAction(
+                    action_id=f"random_{len(current_action_bank) + i:04d}",
+                    text=action.text,
+                    embedding=action.embedding,
+                    category=category,
+                    metadata=metadata
+                )
             )
-            embedded_actions.append(embedded_action)
 
-        print(f"   ✅ Embedded {len(embedded_actions)} random actions")
+        print(f"   ✅ Converted {len(embedded_actions)} random actions to EmbeddedAction")
 
         # Return the combined action bank: current + new random actions
         combined_bank = current_action_bank + embedded_actions
@@ -275,4 +271,3 @@ class RandomBaselineAlgorithm(PersonalizedMarketingAlgorithm):
         print(f"   📁 Results saved to: {results_file}")
 
         return results
-

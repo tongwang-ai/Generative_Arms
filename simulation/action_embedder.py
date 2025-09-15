@@ -36,7 +36,8 @@ class OpenAIActionEmbedder:
     def __init__(self, 
                  api_key: Optional[str] = None,
                  model: str = "text-embedding-3-large",
-                 cache_file: str = "action_embeddings_cache.json"):
+                 cache_file: str = "action_embeddings_cache.json",
+                 require_openai: bool = True):
         """
         Initialize OpenAI embedder.
         
@@ -45,18 +46,19 @@ class OpenAIActionEmbedder:
             model: OpenAI embedding model to use
             cache_file: File to cache embeddings to avoid re-computation
         """
-        # Set up OpenAI client
+        # Set up OpenAI client (required when require_openai is True)
         if not OPENAI_AVAILABLE:
-            print("Warning: OpenAI package not installed. Using fallback embeddings.")
+            if require_openai:
+                raise RuntimeError("OpenAI package not installed. Install `openai` and set OPENAI_API_KEY.")
             self.use_openai = False
             self.client = None
         else:
             # Get API key
             if not api_key:
                 api_key = os.getenv('OPENAI_API_KEY')
-            
             if not api_key:
-                print("Warning: No OpenAI API key provided. Using fallback embeddings.")
+                if require_openai:
+                    raise RuntimeError("OPENAI_API_KEY is required for embeddings. Set it in env or pass api_key.")
                 self.use_openai = False
                 self.client = None
             else:
@@ -64,7 +66,8 @@ class OpenAIActionEmbedder:
                     self.client = OpenAI(api_key=api_key)
                     self.use_openai = True
                 except Exception as e:
-                    print(f"Warning: Failed to initialize OpenAI client: {e}. Using fallback embeddings.")
+                    if require_openai:
+                        raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
                     self.use_openai = False
                     self.client = None
         
@@ -94,7 +97,7 @@ class OpenAIActionEmbedder:
     def _rate_limit(self):
         """Simple rate limiting to avoid API limits (only when using OpenAI)."""
         if not self.use_openai:
-            return  # Skip rate limiting for fallback embeddings
+            return  # Should not happen when require_openai=True
             
         current_time = time.time()
         time_since_last = current_time - self.last_request_time
@@ -112,7 +115,7 @@ class OpenAIActionEmbedder:
             return np.array(self.embedding_cache[text])
         
         if not self.use_openai:
-            return self._get_fallback_embedding(text)
+            raise RuntimeError("OpenAI embeddings required but client is not initialized.")
         
         try:
             self._rate_limit()
@@ -132,64 +135,9 @@ class OpenAIActionEmbedder:
             return embedding_array
             
         except Exception as e:
-            print(f"OpenAI API error for text '{text[:50]}...': {e}")
-            print("Falling back to local embedding method")
-            return self._get_fallback_embedding(text)
+            raise RuntimeError(f"OpenAI API error while embedding text: {e}")
     
-    def _get_fallback_embedding(self, text: str, dim: int = 1536) -> np.ndarray:
-        """
-        Fallback embedding method when OpenAI API is not available.
-        Creates deterministic embeddings based on text characteristics.
-        """
-        # Create deterministic hash-based embedding
-        text_lower = text.lower()
-        
-        # Use text hash as seed for reproducible embeddings
-        text_hash = hash(text) % 2147483647
-        np.random.seed(text_hash)
-        
-        # Base random embedding
-        embedding = np.random.normal(0, 1, dim)
-        
-        # Modify based on text characteristics (semantic features)
-        feature_weights = {
-            # Promotional features
-            'discount': (['discount', 'sale', 'off', '%', 'save'], 0.5),
-            'urgency': (['urgent', 'limited', 'now', 'today', 'hurry'], 0.4),
-            'exclusivity': (['exclusive', 'special', 'premium', 'vip'], 0.3),
-            
-            # Educational features  
-            'learning': (['learn', 'discover', 'understand', 'master'], 0.4),
-            'tips': (['tips', 'guide', 'how', 'tutorial'], 0.3),
-            'expert': (['expert', 'professional', 'advanced'], 0.3),
-            
-            # Social features
-            'community': (['join', 'community', 'share', 'connect'], 0.4),
-            'social': (['friends', 'network', 'social', 'together'], 0.3),
-            'feedback': (['rate', 'review', 'feedback', 'opinion'], 0.3),
-            
-            # Quality features
-            'quality': (['quality', 'best', 'top', 'excellent'], 0.4),
-            'innovation': (['new', 'innovative', 'latest', 'cutting-edge'], 0.3),
-            'reliability': (['reliable', 'trusted', 'secure', 'guaranteed'], 0.3)
-        }
-        
-        # Apply semantic modifications
-        for feature, (keywords, weight) in feature_weights.items():
-            if any(word in text_lower for word in keywords):
-                # Modify specific dimensions based on semantic meaning
-                feature_hash = hash(feature) % dim
-                for i in range(5):  # Affect 5 dimensions per feature
-                    idx = (feature_hash + i) % dim
-                    embedding[idx] += weight
-        
-        # Normalize
-        embedding = embedding / np.linalg.norm(embedding)
-        
-        # Reset random seed
-        np.random.seed()
-        
-        return embedding
+    # Note: Fallback embedding method removed; embeddings must use OpenAI.
     
     def embed_actions(self, action_texts: List[str], 
                      action_categories: Optional[List[str]] = None,
@@ -210,42 +158,101 @@ class OpenAIActionEmbedder:
         if action_categories is None:
             action_categories = ['general'] * len(action_texts)
         
-        print(f"Embedding {len(action_texts)} actions using {'OpenAI API' if self.use_openai else 'fallback method'}...")
+        print(f"Embedding {len(action_texts)} actions using OpenAI API...")
         
         for i in range(0, len(action_texts), batch_size):
             batch_texts = action_texts[i:i+batch_size]
             batch_categories = action_categories[i:i+batch_size]
-            
+
             print(f"Processing batch {i//batch_size + 1}/{(len(action_texts)-1)//batch_size + 1}")
-            
-            for j, text in enumerate(batch_texts):
-                # Generate embedding
-                embedding = self._get_openai_embedding(text)
-                
-                # Create embedded action
+
+            # Embed the entire batch with a single API call (with cache support)
+            embeddings_batch = self.embed_texts_in_batch(batch_texts, batch_size=len(batch_texts))
+
+            for j, (text, embedding) in enumerate(zip(batch_texts, embeddings_batch)):
                 action = EmbeddedAction(
                     action_id=f"action_{i+j:04d}",
                     text=text,
                     embedding=embedding,
                     category=batch_categories[j],
                     metadata={
-                        'embedding_model': self.model if self.use_openai else 'fallback',
+                        'embedding_model': self.model,
                         'embedding_dim': len(embedding),
                         'text_length': len(text)
                     }
                 )
-                
                 embedded_actions.append(action)
-            
             # Save cache after each batch
-            if i % (batch_size * 5) == 0:  # Save every 5 batches
-                self._save_cache()
+            self._save_cache()
         
         # Final cache save
         self._save_cache()
         
         print(f"Embedding complete! Generated {len(embedded_actions)} embedded actions.")
         return embedded_actions
+
+    def embed_texts_in_batch(self, texts: List[str], batch_size: int = 500) -> List[np.ndarray]:
+        """
+        Embed raw texts efficiently using the OpenAI embeddings API in batches.
+
+        Args:
+            texts: List of text strings to embed
+            batch_size: Number of texts per API call
+
+        Returns:
+            List of numpy arrays (embeddings) aligned with input order
+        """
+        if not self.use_openai or self.client is None:
+            raise RuntimeError("OpenAI client not initialized. Set OPENAI_API_KEY.")
+
+        embeddings: List[Optional[np.ndarray]] = [None] * len(texts)
+
+        start = 0
+        total = len(texts)
+        batch_num = 0
+        while start < total:
+            batch_num += 1
+            end = min(start + batch_size, total)
+            batch_texts = texts[start:end]
+
+            # Determine which texts need API calls (not cached)
+            missing_mask = [t not in self.embedding_cache for t in batch_texts]
+            missing_texts = [t for t, miss in zip(batch_texts, missing_mask) if miss]
+
+            if missing_texts:
+                # Single API call for missing texts in this batch
+                self._rate_limit()
+                resp = self.client.embeddings.create(model=self.model, input=missing_texts)
+                # resp.data is aligned with input order
+                for i, item in enumerate(resp.data):
+                    vec = np.array(item.embedding)
+                    txt = missing_texts[i]
+                    self.embedding_cache[txt] = vec.tolist()
+
+                # Save cache periodically
+                if (batch_num % 5) == 0:
+                    self._save_cache()
+
+            # Fill outputs from cache (all batch_texts should now be cached)
+            for i, t in enumerate(batch_texts):
+                cached = self.embedding_cache.get(t)
+                if cached is None:
+                    # Fallback to one-off embed if something went wrong
+                    vec = self._get_openai_embedding(t)
+                else:
+                    vec = np.array(cached)
+                embeddings[start + i] = vec
+
+            start = end
+
+        # Final cache save
+        try:
+            self._save_cache()
+        except Exception:
+            pass
+
+        # type: ignore - ensured populated
+        return embeddings  # type: ignore
 
     def embed_single_action(self,
                             action_id: str,
@@ -264,12 +271,12 @@ class OpenAIActionEmbedder:
         Returns:
             EmbeddedAction with embedding populated.
         """
-        # Generate embedding (uses OpenAI or deterministic fallback)
+        # Generate embedding using OpenAI
         embedding = self._get_openai_embedding(text)
 
         # Merge provided metadata with embedder metadata
         base_metadata: Dict[str, Any] = {
-            'embedding_model': self.model if self.use_openai else 'fallback',
+            'embedding_model': self.model,
             'embedding_dim': int(len(embedding)),
             'text_length': int(len(text))
         }
@@ -314,7 +321,7 @@ class OpenAIActionEmbedder:
         with open(filepath, 'w') as f:
             json.dump({
                 'actions': actions_data,
-                'embedding_model': self.model if self.use_openai else 'fallback',
+                'embedding_model': self.model,
                 'total_actions': len(actions),
                 'embedding_dimension': len(actions[0].embedding) if actions else 0
             }, f, indent=2)

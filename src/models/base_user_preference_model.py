@@ -92,17 +92,18 @@ class BaseUserPreferenceModel(ABC):
     
     def predict_with_text(self, user: User, action_text: str) -> float:
         """
-        Predict user preference using action text directly (for testing different embeddings).
-        
-        Args:
-            user: User object with features attribute
-            action_text: Raw marketing content text
-            
-        Returns:
-            Predicted probability of positive outcome (0.0 to 1.0)
+        Predict user preference using action text directly via OpenAI embeddings.
+        Requires OPENAI_API_KEY to be set. Creates an Action with the true embedding.
         """
-        # Default implementation: create temporary Action object
-        action = Action(action_id="temp", text=action_text, embedding=np.zeros(1536))
+        # Lazy import to avoid hard dependency at module import time
+        try:
+            from simulation.action_embedder import OpenAIActionEmbedder
+        except Exception as e:
+            raise RuntimeError(f"OpenAI embedder not available: {e}")
+
+        embedder = OpenAIActionEmbedder()
+        embedding = embedder._get_openai_embedding(action_text)
+        action = Action(action_id="temp", text=action_text, embedding=embedding)
         return self.predict(user, action)
     
     def predict_batch(self, users: List[User], actions: List[Action]) -> np.ndarray:
