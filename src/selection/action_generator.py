@@ -512,7 +512,8 @@ Requirements:
     def generate_action_pool(self, pool_size: int = 200, 
                            previous_best: Optional[List[Action]] = None,
                            user_segments: Optional[List[str]] = None,
-                           embed_batch_size: int = 500) -> List[Action]:
+                           embed_batch_size: int = 500,
+                           strategy_mix: Optional[dict] = None) -> List[Action]:
         """
         Generate a large candidate action pool using multiple strategies.
         
@@ -529,9 +530,33 @@ Requirements:
             user_segments = ['high_value', 'churn_risk', 'new_user']
             
         # Calculate action counts for each strategy
-        exploit_count = int(pool_size * 0.4)
-        explore_count = int(pool_size * 0.3) 
-        targeted_count = int(pool_size * 0.3)
+        # Allow caller to pass ratios via strategy_mix = {"exploit": 0.4, "explore": 0.3, "targeted": 0.3}
+        if strategy_mix is None:
+            strategy_mix = {"exploit": 0.4, "explore": 0.3, "targeted": 0.3}
+        # Normalize any provided ratios to sum to 1.0
+        mix_total = sum(max(0.0, float(strategy_mix.get(k, 0.0))) for k in ("exploit", "explore", "targeted"))
+        if mix_total <= 0:
+            # Fallback to defaults if invalid
+            strategy_mix = {"exploit": 0.4, "explore": 0.3, "targeted": 0.3}
+            mix_total = 1.0
+        norm_mix = {k: max(0.0, float(strategy_mix.get(k, 0.0))) / mix_total for k in ("exploit", "explore", "targeted")}
+
+        # Allocate integer counts and fix rounding to match pool_size
+        exploit_count = int(round(pool_size * norm_mix["exploit"]))
+        explore_count = int(round(pool_size * norm_mix["explore"]))
+        targeted_count = int(round(pool_size * norm_mix["targeted"]))
+        allocated = exploit_count + explore_count + targeted_count
+        # Adjust by adding/removing from the largest bucket to hit exact pool_size
+        if allocated != pool_size:
+            diff = pool_size - allocated
+            # Find largest category by ratio to adjust
+            largest_key = max(norm_mix.keys(), key=lambda k: norm_mix[k])
+            if largest_key == "exploit":
+                exploit_count += diff
+            elif largest_key == "explore":
+                explore_count += diff
+            else:
+                targeted_count += diff
         
         all_action_texts = []
         

@@ -601,6 +601,7 @@ class PersonalizedMarketingAlgorithm:
         action_pool = self.action_generator.generate_action_pool(
             pool_size=self.config['action_pool_size'],
             previous_best=previous_best,
+            strategy_mix=self.config.get('action_strategy_mix')
         )
         
         # Select optimal subset using our algorithm (start with current action bank)

@@ -59,6 +59,10 @@ def main():
     parser.add_argument('--diversity_weight', type=float, default=0.15, help='Diversity penalty weight (default: 0.15)')
     parser.add_argument('--action_pool_size', type=int, default=2000, help='Action pool size for generation (default: 2000)')
     parser.add_argument('--action_bank_size', type=int, default=20, help='New action bank size per iteration (default: 20)')
+    # Action generation mix ratios
+    parser.add_argument('--exploit_ratio', type=float, default=0.4, help='Fraction of exploit actions in pool (default: 0.4)')
+    parser.add_argument('--explore_ratio', type=float, default=0.3, help='Fraction of explore actions in pool (default: 0.3)')
+    parser.add_argument('--targeted_ratio', type=float, default=0.3, help='Fraction of targeted actions in pool (default: 0.3)')
     parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'], default='lightgbm', help='Reward model type')
     parser.add_argument('--bnn_mc_samples', type=int, default=30, help='MC Dropout samples for bayesian_neural (default: 30)')
     parser.add_argument('--use_pca', action='store_true', default=False, help='Apply PCA to action embeddings before models')
@@ -95,6 +99,11 @@ def main():
         'bnn_mc_samples': getattr(args, 'bnn_mc_samples', 30),
         'action_dim': action_dim,
         'user_dim': 8
+    }
+    algorithm_config['action_strategy_mix'] = {
+        'exploit': args.exploit_ratio,
+        'explore': args.explore_ratio,
+        'targeted': args.targeted_ratio
     }
     if args.use_pca:
         algorithm_config['pca_config'] = {'use_pca': True, 'pca_components': args.pca_components}

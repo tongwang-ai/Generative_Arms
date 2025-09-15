@@ -326,6 +326,13 @@ def main():
                        help='Action pool size for generation (default: 2000)')
     parser.add_argument('--action_bank_size', type=int, default=20,
                        help='New action bank size per iteration (default: 20)')
+    # Action generation mix ratios
+    parser.add_argument('--exploit_ratio', type=float, default=0.4,
+                       help='Fraction of exploit actions in pool (default: 0.4)')
+    parser.add_argument('--explore_ratio', type=float, default=0.3,
+                       help='Fraction of explore actions in pool (default: 0.3)')
+    parser.add_argument('--targeted_ratio', type=float, default=0.3,
+                       help='Fraction of targeted actions in pool (default: 0.3)')
     
     # Reward model selection
     parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'],
@@ -368,6 +375,12 @@ def main():
         'reward_model_type': args.reward_model_type,
         'bnn_mc_samples': getattr(args, 'bnn_mc_samples', 30)
     })
+    # Add strategy mix for action generation
+    algorithm_config['action_strategy_mix'] = {
+        'exploit': args.exploit_ratio,
+        'explore': args.explore_ratio,
+        'targeted': args.targeted_ratio
+    }
     
     # Configure model-specific parameters
     if args.reward_model_type == 'lightgbm':
