@@ -87,6 +87,10 @@ class ActionGenerator:
             "Get ahead with cutting-edge solutions"
         ]
         
+        # Internal controls for LLM generation loops
+        self._llm_max_attempts = 10
+        self._llm_model = "gpt-5"  # Keep as-is; override in embedder if needed
+        
     def _fill_template(self, template: str) -> str:
         """Fill template with random variables."""
         filled = template
@@ -108,15 +112,22 @@ class ActionGenerator:
             return self._generate_template_exploit_actions(previous_best, target_count)
     
     def _generate_llm_exploit_actions(self, previous_best: List[Action], target_count: int) -> List[str]:
-        """Generate exploit actions using LLM based on previous best performers."""
+        """Generate exploit actions using LLM based on previous best performers.
+        Accumulates until target_count is reached, with retries and fallback.
+        """
         if not self.llm_embedder.use_openai:
             return self._generate_template_exploit_actions(previous_best, target_count)
         
-        # Extract top performing action texts
+        # Helper: accumulate unique cleaned lines up to target_count
         best_texts = [action.text for action in previous_best[:5]]  # Use top 5
         best_examples = "\n".join([f"- \"{text}\"" for text in best_texts])
-        
-        prompt = f"""Generate {target_count} new marketing messages by exploiting and improving upon these top-performing messages:
+
+        collected: List[str] = []
+        seen_norm = set()
+
+        attempts = 0
+        while len(collected) < target_count and attempts < self._llm_max_attempts:
+            prompt = f"""Generate several improved marketing messages by exploiting and improving upon these top-performing messages:
 
 {best_examples}
 
@@ -127,38 +138,36 @@ Requirements:
 - Keep the same general length and style as the originals
 - Focus on the same product: professional platform membership
 - Each message should be 5-15 words long
-- Return only the messages, one per line, no numbering
+- Return the messages, one per line, no numbering or bullets
+"""
+            try:
+                response = self.llm_embedder.client.chat.completions.create(
+                    model=self._llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.7
+                )
+                actions_text = response.choices[0].message.content.strip()
+                new_lines = self._clean_llm_lines(actions_text)
+                for line in new_lines:
+                    norm = self._normalize_action_text(line)
+                    if norm and norm not in seen_norm:
+                        collected.append(line)
+                        seen_norm.add(norm)
+                        if len(collected) >= target_count:
+                            break
+            except Exception as e:
+                print(f"Error generating LLM exploit actions (attempt {attempts+1}): {e}")
+                # Continue to next attempt; fallback after loop if needed
+            attempts += 1
 
-Generate {target_count} exploit strategy messages now:"""
+        if len(collected) < target_count:
+            # Fallback to template variations to fill the gap
+            shortfall = target_count - len(collected)
+            filler = self._generate_template_exploit_actions(previous_best, shortfall)
+            collected.extend(filler)
 
-        try:
-            response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-5",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.7
-            )
-            
-            actions_text = response.choices[0].message.content.strip()
-            actions = [line.strip() for line in actions_text.split('\n') if line.strip()]
-            
-            # Clean up formatting
-            cleaned_actions = []
-            for action in actions:
-                action = action.strip()
-                if action.startswith(('-', '*', '•')):
-                    action = action[1:].strip()
-                if '. ' in action and action.split('. ')[0].isdigit():
-                    action = '. '.join(action.split('. ')[1:])
-                if action.startswith('"') and action.endswith('"'):
-                    action = action[1:-1]
-                cleaned_actions.append(action)
-            
-            return cleaned_actions[:target_count]
-            
-        except Exception as e:
-            print(f"Error generating LLM exploit actions: {e}")
-            return self._generate_template_exploit_actions(previous_best, target_count)
+        return collected[:target_count]
     
     def _generate_template_exploit_actions(self, previous_best: List[Action], target_count: int) -> List[str]:
         """Generate exploit actions using template variations (fallback method)."""
@@ -210,16 +219,23 @@ Generate {target_count} exploit strategy messages now:"""
             return self._generate_template_explore_actions(target_count, existing_actions)
     
     def _generate_llm_explore_actions(self, target_count: int, existing_actions: List[str] = None) -> List[str]:
-        """Generate explore actions using LLM for maximum creativity and diversity."""
+        """Generate explore actions using LLM for maximum creativity and diversity.
+        Accumulates until target_count is reached, with retries and fallback.
+        """
         if not self.llm_embedder.use_openai:
             return self._generate_template_explore_actions(target_count, existing_actions)
         
-        existing_text = ""
-        if existing_actions:
-            existing_sample = existing_actions[:5]  # Show a few examples to avoid
-            existing_text = f"\nAvoid creating messages similar to these existing ones:\n" + "\n".join([f"- \"{action}\"" for action in existing_sample])
-        
-        prompt = f"""Generate {target_count} highly creative and diverse marketing messages for professional platform membership using EXPLORATION strategy.
+        collected: List[str] = []
+        seen_norm = set()
+        attempts = 0
+
+        while len(collected) < target_count and attempts < self._llm_max_attempts:
+            existing_text = ""
+            if existing_actions:
+                existing_sample = (existing_actions + collected)[:5]
+                existing_text = "\nAvoid creating messages similar to these existing ones:\n" + "\n".join([f"- \"{a}\"" for a in existing_sample])
+
+            prompt = f"""Generate several creative and diverse marketing messages for professional platform membership using EXPLORATION strategy.
 
 Requirements:
 - Be innovative and experimental with messaging approaches
@@ -230,38 +246,34 @@ Requirements:
 - Focus on professional platform membership
 - Each message should be 5-15 words long
 - Be creative but still professional and compelling
-- Return only the messages, one per line, no numbering{existing_text}
+- Return the messages, one per line, no numbering{existing_text}
+"""
+            try:
+                response = self.llm_embedder.client.chat.completions.create(
+                    model=self._llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.9
+                )
+                actions_text = response.choices[0].message.content.strip()
+                new_lines = self._clean_llm_lines(actions_text)
+                for line in new_lines:
+                    norm = self._normalize_action_text(line)
+                    if norm and norm not in seen_norm:
+                        collected.append(line)
+                        seen_norm.add(norm)
+                        if len(collected) >= target_count:
+                            break
+            except Exception as e:
+                print(f"Error generating LLM explore actions (attempt {attempts+1}): {e}")
+            attempts += 1
 
-Generate {target_count} exploratory strategy messages now:"""
+        if len(collected) < target_count:
+            shortfall = target_count - len(collected)
+            filler = self._generate_template_explore_actions(shortfall, existing_actions)
+            collected.extend(filler)
 
-        try:
-            response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-5",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.9  # Higher temperature for more creativity
-            )
-            
-            actions_text = response.choices[0].message.content.strip()
-            actions = [line.strip() for line in actions_text.split('\n') if line.strip()]
-            
-            # Clean up formatting
-            cleaned_actions = []
-            for action in actions:
-                action = action.strip()
-                if action.startswith(('-', '*', '•')):
-                    action = action[1:].strip()
-                if '. ' in action and action.split('. ')[0].isdigit():
-                    action = '. '.join(action.split('. ')[1:])
-                if action.startswith('"') and action.endswith('"'):
-                    action = action[1:-1]
-                cleaned_actions.append(action)
-            
-            return cleaned_actions[:target_count]
-            
-        except Exception as e:
-            print(f"Error generating LLM explore actions: {e}")
-            return self._generate_template_explore_actions(target_count, existing_actions)
+        return collected[:target_count]
     
     def _generate_template_explore_actions(self, target_count: int, existing_actions: List[str] = None) -> List[str]:
         """Generate explore actions using creative templates (fallback method)."""
@@ -310,7 +322,9 @@ Generate {target_count} exploratory strategy messages now:"""
             return self._generate_template_targeted_actions(target_segments, target_count)
     
     def _generate_llm_targeted_actions(self, target_segments: List[str], target_count: int) -> List[str]:
-        """Generate targeted actions using LLM for precise segment targeting."""
+        """Generate targeted actions using LLM for precise segment targeting.
+        Accumulates until target_count is reached, with retries and fallback.
+        """
         if not self.llm_embedder.use_openai:
             return self._generate_template_targeted_actions(target_segments, target_count)
         
@@ -330,7 +344,12 @@ Generate {target_count} exploratory strategy messages now:"""
         # Create segment-specific messages
         segments_text = ", ".join([segment_descriptions.get(seg, seg) for seg in target_segments])
         
-        prompt = f"""Generate {target_count} highly targeted marketing messages for professional platform membership using TARGETED strategy.
+        collected: List[str] = []
+        seen_norm = set()
+        attempts = 0
+
+        while len(collected) < target_count and attempts < self._llm_max_attempts:
+            prompt = f"""Generate several highly targeted marketing messages for professional platform membership using TARGETED strategy.
 
 Target these specific user segments: {segments_text}
 
@@ -341,38 +360,34 @@ Requirements:
 - Focus on professional platform membership
 - Each message should be 5-15 words long
 - Make the targeting clear but not overly obvious
-- Return only the messages, one per line, no numbering
+- Return the messages, one per line, no numbering
+"""
+            try:
+                response = self.llm_embedder.client.chat.completions.create(
+                    model=self._llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=600,
+                    temperature=0.8
+                )
+                actions_text = response.choices[0].message.content.strip()
+                new_lines = self._clean_llm_lines(actions_text)
+                for line in new_lines:
+                    norm = self._normalize_action_text(line)
+                    if norm and norm not in seen_norm:
+                        collected.append(line)
+                        seen_norm.add(norm)
+                        if len(collected) >= target_count:
+                            break
+            except Exception as e:
+                print(f"Error generating LLM targeted actions (attempt {attempts+1}): {e}")
+            attempts += 1
 
-Generate {target_count} targeted strategy messages now:"""
+        if len(collected) < target_count:
+            shortfall = target_count - len(collected)
+            filler = self._generate_template_targeted_actions(target_segments, shortfall)
+            collected.extend(filler)
 
-        try:
-            response = self.llm_embedder.client.chat.completions.create(
-                model="gpt-5",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=600,
-                temperature=0.8
-            )
-            
-            actions_text = response.choices[0].message.content.strip()
-            actions = [line.strip() for line in actions_text.split('\n') if line.strip()]
-            
-            # Clean up formatting
-            cleaned_actions = []
-            for action in actions:
-                action = action.strip()
-                if action.startswith(('-', '*', '•')):
-                    action = action[1:].strip()
-                if '. ' in action and action.split('. ')[0].isdigit():
-                    action = '. '.join(action.split('. ')[1:])
-                if action.startswith('"') and action.endswith('"'):
-                    action = action[1:-1]
-                cleaned_actions.append(action)
-            
-            return cleaned_actions[:target_count]
-            
-        except Exception as e:
-            print(f"Error generating LLM targeted actions: {e}")
-            return self._generate_template_targeted_actions(target_segments, target_count)
+        return collected[:target_count]
     
     def _generate_template_targeted_actions(self, target_segments: List[str], target_count: int) -> List[str]:
         """Generate targeted actions using segment templates (fallback method)."""
@@ -533,16 +548,42 @@ Generate {target_count} targeted strategy messages now:"""
         
         # Remove duplicates while preserving order (enhanced deduplication)
         unique_actions = self._remove_duplicates(all_action_texts)
+
+        # Ensure we have at least pool_size items; fill shortfall deterministically
+        attempts = 0
+        while len(unique_actions) < pool_size and attempts < 3:
+            shortfall = pool_size - len(unique_actions)
+            # Use template-based generation to quickly fill any gap
+            unique_actions.extend(self._generate_from_templates(shortfall * 2))  # over-generate for more uniqueness
+            unique_actions = self._remove_duplicates(unique_actions)
+            attempts += 1
         
         # Convert to Action objects with OpenAI embeddings (batching)
         if not getattr(self.llm_embedder, 'use_openai', False):
             raise RuntimeError("OpenAI embeddings are required but not available. Set OPENAI_API_KEY.")
 
-        embeddings = self.llm_embedder.embed_texts_in_batch(unique_actions, batch_size=embed_batch_size)
+        embeddings = self.llm_embedder.embed_texts_in_batch(unique_actions[:pool_size], batch_size=embed_batch_size)
 
         action_pool = []
-        for i, (text, embedding) in enumerate(zip(unique_actions, embeddings)):
+        for i, (text, embedding) in enumerate(zip(unique_actions[:pool_size], embeddings)):
             action = Action(action_id=f"gen_action_{i}", text=text, embedding=embedding)
             action_pool.append(action)
             
         return action_pool[:pool_size]  # Ensure we don't exceed requested size
+
+    # --- helpers ---
+    def _clean_llm_lines(self, raw_text: str) -> List[str]:
+        """Split LLM output into lines and normalize common formatting artifacts."""
+        lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+        cleaned: List[str] = []
+        for action in lines:
+            a = action.strip()
+            if a.startswith(('-', '*', '•')):
+                a = a[1:].strip()
+            # Remove '1. ', '2) ' etc.
+            if re.match(r"^\d+[\).]\s+", a):
+                a = re.sub(r"^\d+[\).]\s+", "", a)
+            if a.startswith('"') and a.endswith('"') and len(a) >= 2:
+                a = a[1:-1].strip()
+            cleaned.append(a)
+        return cleaned
