@@ -15,32 +15,35 @@ Given historical data `D = {(x_i, a_i, y_i)}` where:
 
 ```
 PersonalizedTargeting/
-├── algorithm/                         # Core optimization algorithm
-│   ├── optimization_algorithm.py     # Action bank generation from observations
-│   └── ground_truth_evaluator.py     # Ground truth evaluation and metrics
-│
-├── simulation/                        # Company simulation environment
-│   ├── user_generator.py             # User population with 8-dimensional features
-│   ├── action_embedder.py            # OpenAI action creation and embedding
-│   ├── ground_truth.py               # Ground truth preference models
-│   └── company_simulator.py          # Simulation orchestrator
-│
-├── src/                              # Shared components
+├── src/                              # All source code modules
+│   ├── algorithm/                    # Core optimization logic
+│   │   ├── action_selector.py        # Greedy selection algorithm
+│   │   ├── evaluation/               # Algorithm evaluation helpers
+│   │   │   └── ground_truth_evaluator.py
+│   │   ├── models/                   # Reward models
+│   │   │   ├── base_user_preference_model.py
+│   │   │   ├── neural_user_preference_model.py
+│   │   │   ├── bayesian_neural_user_preference_model.py
+│   │   │   ├── lightgbm_user_preference_model.py
+│   │   │   ├── gaussian_process_user_preference_model.py
+│   │   │   ├── linear_user_preference_model.py
+│   │   │   └── ft_transformer_user_preference_model.py
+│   │   └── workflow/                 # End-to-end optimization pipelines
+│   │       ├── optimization_algorithm.py
+│   │       └── random_baseline_algorithm.py
+│   ├── simulation/                   # Company simulation environment
+│   │   ├── ground_truth.py           # Ground truth preference models
+│   │   ├── strategies/               # Company targeting strategies
+│   │   │   ├── base_strategy.py
+│   │   │   └── linucb_strategy.py
+│   │   └── workflow/                 # Simulation orchestrators
+│   │       └── company_simulator.py
 │   ├── data/                         # User and Action data structures
 │   │   └── entities.py               # Core data classes
-│   ├── models/                       # User preference models (reward models)
-│   │   ├── base_user_preference_model.py      # Interface for all models
-│   │   ├── neural_user_preference_model.py    # Neural network model
-│   │   ├── bayesian_neural_user_preference_model.py  # Bayesian neural with uncertainty
-│   │   ├── lightgbm_user_preference_model.py  # LightGBM model
-│   │   ├── gaussian_process_user_preference_model.py  # GP model
-│   │   └── linear_user_preference_model.py    # Linear/logistic model
-│   ├── selection/                    # Action generation and selection
-│   │   ├── action_generator.py       # LLM-based action generation
-│   │   └── action_selector.py        # Greedy selection algorithm
-│   └── strategies/                   # Company targeting strategies
-│       ├── base_strategy.py          # Strategy interface
-│       └── linucb_strategy.py        # LinUCB contextual bandit
+│   └── util/                         # Shared utilities
+│       ├── action_embedder.py        # OpenAI action creation and embedding
+│       ├── action_generator.py       # LLM-based action generation
+│       └── user_generator.py         # User population with 8-dimensional features
 │
 ├── results/                          # Generated results (auto-created)
 │   ├── simulation_*/                 # Full simulation experiment results
@@ -76,20 +79,20 @@ Observation Data (CSV) → Reward Model Training → Action Generation → Greed
 
 ### Key Components
 
-#### 1. Algorithm (`algorithm/optimization_algorithm.py`)
+#### 1. Algorithm (`src/algorithm/workflow/optimization_algorithm.py`)
 The core algorithm that learns from observation data to generate new action banks:
 - **Load Historical Data**: Process observation records from targeting campaigns
 - **Train Reward Model**: Learn to predict `P(y=1|x,a)` from user-action features
 - **Generate Action Pool**: Create large candidate set (~2000 actions) using LLM
 - **Greedy Selection**: Pick top-K actions that maximize expected reward for user distribution
 
-#### 2. Company Simulation (`simulation/`)
+#### 2. Company Simulation (`src/simulation/workflow/company_simulator.py`)
 Simulates realistic company behavior for validation:
 - **User Generation**: Creates diverse user populations with meaningful demographic features
 - **Targeting Strategy**: LinUCB contextual bandit for action selection
 - **Ground Truth Models**: Mixture of Experts or Gaussian Mixture Models for realistic preferences
 
-#### 3. Reward Models (`src/models/`)
+#### 3. Reward Models (`src/algorithm/models/`)
 Various approaches to learn user preferences:
 - **Neural Model**: Feedforward network with user-action feature engineering
 - **Bayesian Neural Model**: MC Dropout-based neural network that provides both predictions and uncertainty estimates

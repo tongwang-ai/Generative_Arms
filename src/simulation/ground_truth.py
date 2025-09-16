@@ -12,8 +12,8 @@ from sklearn.mixture import GaussianMixture
 import warnings
 warnings.filterwarnings('ignore')
 
-from .user_generator import MeaningfulUser
-from .action_embedder import EmbeddedAction
+from src.util.user_generator import MeaningfulUser
+from src.util.action_embedder import EmbeddedAction
 
 
 @dataclass

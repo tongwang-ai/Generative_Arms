@@ -11,7 +11,7 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 from abc import ABC, abstractmethod
 
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class BaseUserPreferenceModel(ABC):
@@ -97,7 +97,7 @@ class BaseUserPreferenceModel(ABC):
         """
         # Lazy import to avoid hard dependency at module import time
         try:
-            from simulation.action_embedder import OpenAIActionEmbedder
+            from src.util.action_embedder import OpenAIActionEmbedder
         except Exception as e:
             raise RuntimeError(f"OpenAI embedder not available: {e}")
 

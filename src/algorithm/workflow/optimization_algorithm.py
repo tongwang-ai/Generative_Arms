@@ -9,11 +9,7 @@ from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import scipy.stats
 
-# Import from the original src modules
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
-from src.models import (
+from src.algorithm.models import (
     LightGBMUserPreferenceModel,
     NeuralUserPreferenceModel,
     LinearUserPreferenceModel,
@@ -21,16 +17,16 @@ from src.models import (
     BayesianNeuralUserPreferenceModel,
     FTTransformerUserPreferenceModel,
 )
-from src.selection.action_generator import ActionGenerator
-from src.selection.action_selector import ActionSelector
+from src.algorithm.action_selector import ActionSelector
+from src.util.action_generator import ActionGenerator
 from src.data.entities import User, Action
 
-# Import simulation components for data structures
-from simulation.user_generator import MeaningfulUser
-from simulation.action_embedder import EmbeddedAction
+# Import shared data structures
+from src.util.user_generator import MeaningfulUser
+from src.util.action_embedder import EmbeddedAction
 
 # Import ground truth evaluator
-from .ground_truth_evaluator import GroundTruthEvaluator
+from ..evaluation.ground_truth_evaluator import GroundTruthEvaluator
 
 
 class PersonalizedMarketingAlgorithm:
@@ -493,7 +489,7 @@ class PersonalizedMarketingAlgorithm:
     def _evaluate_reward_model_ground_truth(self, users: List[User], 
                                           actions: List[Action]) -> Dict[str, Any]:
         """Evaluate reward model predictions against ground truth conversion rates."""
-        from simulation.ground_truth import create_ground_truth_utility
+        from src.simulation.ground_truth import create_ground_truth_utility
         
         # Initialize ground truth utility (same as used in simulation)
         # Determine action dimension from actual actions

@@ -26,12 +26,12 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__)))
 
 from src.data.entities import User, Action
-from src.models.base_user_preference_model import BaseUserPreferenceModel
-from src.models.lightgbm_user_preference_model import LightGBMUserPreferenceModel
-from src.models.neural_user_preference_model import NeuralUserPreferenceModel
-from src.models.linear_user_preference_model import LinearUserPreferenceModel
-from src.models.gaussian_process_user_preference_model import GaussianProcessUserPreferenceModel
-from src.models.user_preference_model_tester import UserPreferenceModelTester
+from src.algorithm.models.base_user_preference_model import BaseUserPreferenceModel
+from src.algorithm.models.lightgbm_user_preference_model import LightGBMUserPreferenceModel
+from src.algorithm.models.neural_user_preference_model import NeuralUserPreferenceModel
+from src.algorithm.models.linear_user_preference_model import LinearUserPreferenceModel
+from src.algorithm.models.gaussian_process_user_preference_model import GaussianProcessUserPreferenceModel
+from src.algorithm.models.user_preference_model_tester import UserPreferenceModelTester
 
 
 class CustomUserPreferenceModel(BaseUserPreferenceModel):

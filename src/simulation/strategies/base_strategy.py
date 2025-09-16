@@ -11,10 +11,10 @@ from typing import List, Dict, Any, Optional, Tuple
 from abc import ABC, abstractmethod
 import json
 
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
-# CompanyObservation is imported from simulation.ground_truth to avoid circular imports
+# CompanyObservation is imported from src.simulation.ground_truth to avoid circular imports
 
 
 class BaseCompanyStrategy(ABC):

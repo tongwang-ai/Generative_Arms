@@ -22,9 +22,9 @@ from tqdm import tqdm
 # Add paths to find modules
 sys.path.append(os.path.dirname(__file__))
 
-from simulation.company_simulator import CompanySimulator
-from simulation.action_embedder import EmbeddedAction
-from algorithm.optimization_algorithm import PersonalizedMarketingAlgorithm
+from src.simulation.workflow.company_simulator import CompanySimulator
+from src.util.action_embedder import EmbeddedAction
+from src.algorithm.workflow.optimization_algorithm import PersonalizedMarketingAlgorithm
 
 
 def convert_to_embedded_action(action_data: Dict[str, Any]) -> EmbeddedAction:

@@ -19,9 +19,9 @@ from tqdm import tqdm
 # Add paths to find modules
 sys.path.append(os.path.dirname(__file__))
 
-from simulation.company_simulator import CompanySimulator
-from simulation.action_embedder import EmbeddedAction
-from algorithm.random_baseline_algorithm import RandomBaselineAlgorithm
+from src.simulation.workflow.company_simulator import CompanySimulator
+from src.util.action_embedder import EmbeddedAction
+from src.algorithm.workflow.random_baseline_algorithm import RandomBaselineAlgorithm
 
 
 def convert_to_embedded_action(action_data: Dict[str, Any]) -> EmbeddedAction:

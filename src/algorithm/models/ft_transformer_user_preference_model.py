@@ -25,7 +25,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
 
 from .base_user_preference_model import BaseUserPreferenceModel
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class FeatureTokenizer(nn.Module):
@@ -455,4 +455,3 @@ class FTTransformerUserPreferenceModel(BaseUserPreferenceModel):
             'pca_components': self.pca_components
         })
         return info
-

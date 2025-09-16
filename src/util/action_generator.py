@@ -1,14 +1,10 @@
 import numpy as np
 import random
 from typing import List, Dict, Any, Optional
-from ..data.entities import Action, User
+from src.data.entities import Action, User
 import re
-import os
-import sys
 
-# Import OpenAI embedder for LLM-based action generation
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-from simulation.action_embedder import OpenAIActionEmbedder
+from src.util.action_embedder import OpenAIActionEmbedder
 
 
 class ActionGenerator:
@@ -143,9 +139,7 @@ Requirements:
             try:
                 response = self.llm_embedder.client.chat.completions.create(
                     model=self._llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=600,
-                    temperature=0.7
+                    messages=[{"role": "user", "content": prompt}]
                 )
                 actions_text = response.choices[0].message.content.strip()
                 new_lines = self._clean_llm_lines(actions_text)
@@ -251,9 +245,7 @@ Requirements:
             try:
                 response = self.llm_embedder.client.chat.completions.create(
                     model=self._llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=600,
-                    temperature=0.9
+                    messages=[{"role": "user", "content": prompt}]
                 )
                 actions_text = response.choices[0].message.content.strip()
                 new_lines = self._clean_llm_lines(actions_text)
@@ -365,9 +357,7 @@ Requirements:
             try:
                 response = self.llm_embedder.client.chat.completions.create(
                     model=self._llm_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=600,
-                    temperature=0.8
+                    messages=[{"role": "user", "content": prompt}]
                 )
                 actions_text = response.choices[0].message.content.strip()
                 new_lines = self._clean_llm_lines(actions_text)

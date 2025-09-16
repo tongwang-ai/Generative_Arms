@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 
 from .neural_user_preference_model import NeuralUserPreferenceModel, NeuralNetwork
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class BayesianNeuralUserPreferenceModel(NeuralUserPreferenceModel):
@@ -92,4 +92,3 @@ class BayesianNeuralUserPreferenceModel(NeuralUserPreferenceModel):
             'mc_samples': self.mc_samples
         })
         return info
-

@@ -16,7 +16,7 @@ from sklearn.model_selection import train_test_split
 import warnings
 
 from .base_user_preference_model import BaseUserPreferenceModel
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class UserPreferenceModelTester:

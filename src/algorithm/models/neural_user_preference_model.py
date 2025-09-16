@@ -18,7 +18,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 from .base_user_preference_model import BaseUserPreferenceModel
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class NeuralNetwork(nn.Module):

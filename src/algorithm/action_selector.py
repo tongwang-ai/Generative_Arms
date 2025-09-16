@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Dict, Any, Optional
-from ..data.entities import User, Action
-from ..models.base_user_preference_model import BaseUserPreferenceModel
+from src.data.entities import User, Action
+from src.algorithm.models.base_user_preference_model import BaseUserPreferenceModel
 import time
 from tqdm import tqdm
 

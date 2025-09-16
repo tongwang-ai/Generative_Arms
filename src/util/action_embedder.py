@@ -461,9 +461,7 @@ Generate {count} marketing messages for {product_focus} now:"""
         try:
             response = self.client.chat.completions.create(
                 model="gpt-5",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=800,
-                temperature=0.8
+                messages=[{"role": "user", "content": prompt}]
             )
             
             actions_text = response.choices[0].message.content.strip()

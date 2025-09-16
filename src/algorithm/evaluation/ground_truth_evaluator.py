@@ -5,12 +5,9 @@ import os
 from typing import List, Dict, Any, Tuple
 from dataclasses import dataclass
 
-# Import data structures
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from src.data.entities import Action, User
-from simulation.user_generator import MeaningfulUser
-from simulation.ground_truth import create_ground_truth_utility
+from src.util.user_generator import MeaningfulUser
+from src.simulation.ground_truth import create_ground_truth_utility
 
 
 @dataclass

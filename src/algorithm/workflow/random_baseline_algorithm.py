@@ -6,7 +6,7 @@ Implements a baseline algorithm that randomly generates K actions per iteration
 and appends them to the current action bank, without training a reward model.
 
 This class mirrors the behavior previously embedded in run_random_baseline.py,
-but is now a first-class algorithm under the algorithm/ package, parallel to
+but is now a first-class algorithm under the src/algorithm/ package, parallel to
 optimization_algorithm.py.
 """
 
@@ -19,7 +19,7 @@ from typing import Dict, Any, List, Tuple
 import pandas as pd
 
 from .optimization_algorithm import PersonalizedMarketingAlgorithm
-from simulation.action_embedder import EmbeddedAction
+from src.util.action_embedder import EmbeddedAction
 
 
 class RandomBaselineAlgorithm(PersonalizedMarketingAlgorithm):
@@ -52,7 +52,7 @@ class RandomBaselineAlgorithm(PersonalizedMarketingAlgorithm):
         with open(users_file, 'r') as f:
             users_data = json.load(f)
 
-        from simulation.user_generator import MeaningfulUser
+        from src.util.user_generator import MeaningfulUser
         import numpy as np
 
         users = []

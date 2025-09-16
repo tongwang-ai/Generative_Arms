@@ -12,7 +12,7 @@ Available Models:
 - UserPreferenceModelWrapper: Wrapper for legacy models
 
 Usage:
-    from src.models import LightGBMUserPreferenceModel
+    from src.algorithm.models import LightGBMUserPreferenceModel
     
     # Create model with optional PCA
     model = LightGBMUserPreferenceModel(use_pca=True, pca_components=50)

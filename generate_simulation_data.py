@@ -18,7 +18,7 @@ import argparse
 from datetime import datetime
 from typing import Dict, Any
 
-from simulation.company_simulator import CompanySimulator
+from src.simulation.workflow.company_simulator import CompanySimulator
 
 
 def ensure_dir(path: str):
@@ -127,4 +127,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

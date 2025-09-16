@@ -8,10 +8,10 @@ from typing import List, Dict, Any, Tuple
 from pathlib import Path
 from tqdm import tqdm
 
-from .user_generator import MeaningfulUserGenerator, MeaningfulUser
-from .action_embedder import OpenAIActionEmbedder, EmbeddedAction, create_marketing_action_bank
-from .ground_truth import create_ground_truth_utility, CompanyObservation
-from src.strategies import BaseCompanyStrategy, LinUCBStrategy
+from src.util.user_generator import MeaningfulUserGenerator, MeaningfulUser
+from src.util.action_embedder import OpenAIActionEmbedder, EmbeddedAction, create_marketing_action_bank
+from ..ground_truth import create_ground_truth_utility, CompanyObservation
+from ..strategies import BaseCompanyStrategy, LinUCBStrategy
 
 
 class CompanySimulator:

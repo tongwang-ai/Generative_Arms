@@ -25,9 +25,9 @@ from typing import Dict, Any
 
 import numpy as np
 
-from simulation.company_simulator import CompanySimulator
-from simulation.action_embedder import EmbeddedAction, OpenAIActionEmbedder
-from algorithm.optimization_algorithm import PersonalizedMarketingAlgorithm
+from src.simulation.workflow.company_simulator import CompanySimulator
+from src.util.action_embedder import EmbeddedAction, OpenAIActionEmbedder
+from src.algorithm.workflow.optimization_algorithm import PersonalizedMarketingAlgorithm
 
 
 def convert_to_embedded_action(action_data: Dict[str, Any]) -> EmbeddedAction:

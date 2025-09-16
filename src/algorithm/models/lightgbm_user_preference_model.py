@@ -14,7 +14,7 @@ from sklearn.metrics import roc_auc_score, accuracy_score
 import lightgbm as lgb
 
 from .base_user_preference_model import BaseUserPreferenceModel
-from ..data.entities import User, Action
+from src.data.entities import User, Action
 
 
 class LightGBMUserPreferenceModel(BaseUserPreferenceModel):
@@ -129,7 +129,6 @@ class LightGBMUserPreferenceModel(BaseUserPreferenceModel):
             
         # Prepare features
         action_embedding = action.embedding
-        print(f"Action embedding shape in predict: {action_embedding.shape}") ###
 
         if self.use_pca:
             action_embedding = self.pca.transform(action_embedding.reshape(1, -1)).flatten()
