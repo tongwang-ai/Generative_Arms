@@ -102,7 +102,7 @@ class MixtureOfExpertsUtility(GroundTruthUtility):
     Enhanced with diversity constraints to prevent single action dominance.
     """
     
-    def __init__(self, n_experts: int = 4, random_seed: int = 42, user_dim: int = 8, action_dim: int = 3072,
+    def __init__(self, n_experts: int = 4, random_seed: int = 42, user_dim: int = 30, action_dim: int = 3072,
                  diversity_regularization: float = 0.2, max_preference_share: float = 0.4):
         super().__init__(random_seed)
         self.n_experts = n_experts

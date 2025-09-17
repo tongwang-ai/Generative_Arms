@@ -5,8 +5,8 @@ Random Baseline Algorithm
 Implements a baseline algorithm that randomly generates K actions per iteration
 and appends them to the current action bank, without training a reward model.
 
-This class mirrors the behavior previously embedded in run_random_baseline.py,
-but is now a first-class algorithm under the src/algorithm/ package, parallel to
+This class mirrors the behavior previously embedded in the legacy run_random_baseline.py
+entrypoint but is now a first-class algorithm under the src/algorithm/ package, parallel to
 optimization_algorithm.py.
 """
 
@@ -36,8 +36,16 @@ class RandomBaselineAlgorithm(PersonalizedMarketingAlgorithm):
             'action_pool_size': algorithm_config.get('action_bank_size', 20),  # Generate only what we need
             'action_bank_size': algorithm_config.get('action_bank_size', 20),
             'random_seed': algorithm_config.get('random_seed', 42),
-            'reward_model_type': 'lightgbm'  # Still need to initialize, but won't use
+            'reward_model_type': 'lightgbm',  # Still need to initialize, but won't use
+            'task_type': algorithm_config.get('task_type', 'binary')
         }
+        # Preserve segment-aware configuration if requested
+        for key in ['action_dim', 'user_dim', 'use_segment_data', 'segment_feature_dim']:
+            if key in algorithm_config and key not in minimal_config:
+                minimal_config[key] = algorithm_config[key]
+        # Include any other overrides from caller
+        for key, value in algorithm_config.items():
+            minimal_config.setdefault(key, value)
         super().__init__(results_dir, minimal_config)
         self.is_baseline = True
 

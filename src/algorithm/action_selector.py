@@ -59,7 +59,10 @@ class ActionSelector:
             current_action_bank = []
         
         selected_actions = current_action_bank.copy()
-        
+
+        user_weights = np.array([getattr(u, 'weight', 1.0) for u in users], dtype=float)
+        total_weight = float(user_weights.sum()) if len(user_weights) else 0.0
+
         # Remove actions already in current bank from the pool
         remaining_actions = [a for a in action_pool if a.action_id not in {act.action_id for act in selected_actions}]
         
@@ -74,15 +77,17 @@ class ActionSelector:
         
         # Pre-compute max rewards for current bank (optimization) - DEBUG VERSION
         # current_user_max_rewards = self._compute_user_max_rewards(selected_actions, users, reward_model)
-        current_user_max_rewards, current_best_actions, current_reward_matrix, current_action_stats = self._compute_user_max_rewards_debug(selected_actions, users, reward_model)
+        current_user_max_rewards, current_best_actions, current_reward_matrix, current_action_stats = self._compute_user_max_rewards_debug(selected_actions, users, reward_model, user_weights)
         
         # Print debug info about current action bank
         print(f"Current action bank analysis:")
         if selected_actions:
-            print(f"  Actions in current bank: {len(selected_actions)}")
+            print(f"  Actions in current bank: {len(selected_actions)} (weighted users: {total_weight:.2f})")
             for action_id, stats in current_action_stats.items():
                 print(f"    {action_id}: {stats['action_text']}")
-                print(f"      Mean reward: {stats['mean_reward']:.4f}, Users selecting this: {stats['users_best_count']}/{len(users)} ({stats['users_best_count']/len(users)*100:.1f}%)")
+                best_weight = stats['users_best_count']
+                share = (best_weight / total_weight * 100) if total_weight else 0.0
+                print(f"      Mean reward: {stats['mean_reward']:.4f}, Weighted users selecting this: {best_weight:.2f}/{total_weight:.2f} ({share:.1f}%)")
             print(f"  Overall user rewards: min={np.min(current_user_max_rewards):.4f}, "
                   f"max={np.max(current_user_max_rewards):.4f}, "
                   f"mean={np.mean(current_user_max_rewards):.4f}")
@@ -110,7 +115,10 @@ class ActionSelector:
             # Vectorized marginal gains for all remaining candidates
             improvement = reward_matrix - current_user_max_rewards[:, None]
             np.maximum(improvement, 0.0, out=improvement)
-            gains = improvement.sum(axis=0)
+            weighted_improvement = improvement
+            if len(user_weights):
+                weighted_improvement = improvement * user_weights[:, None]
+            gains = weighted_improvement.sum(axis=0)
             gains[~active] = -np.inf
 
             best_idx = int(np.argmax(gains))
@@ -129,7 +137,7 @@ class ActionSelector:
             current_user_max_rewards = np.maximum(current_user_max_rewards, reward_matrix[:, best_idx])
 
             elapsed = time.time() - step_start
-            print(f"  Selected: {best_action.text[:50]}... (gain: {best_gain:.4f}, time: {elapsed:.2f}s)")
+            print(f"  Selected: {best_action.text[:50]}... (weighted gain: {best_gain:.4f}, time: {elapsed:.2f}s)")
 
         print(f"Selection complete. Selected {len(selected_actions)} actions.")
         return selected_actions
@@ -155,13 +163,14 @@ class ActionSelector:
         """
         try:
             # If no current bank, just compute total value of new action
+            user_weights = np.array([getattr(u, 'weight', 1.0) for u in users], dtype=float)
             if not current_bank:
                 new_action_rewards = self._compute_action_rewards_for_users(action_to_add, users, reward_model)
                 if self.value_mode == 'causal_value' and control_action is not None:
                     control_rewards = self._compute_action_rewards_for_users(control_action, users, reward_model)
-                    return np.sum(new_action_rewards - control_rewards)
+                    return float(np.sum((new_action_rewards - control_rewards) * user_weights))
                 else:
-                    return np.sum(new_action_rewards)
+                    return float(np.sum(new_action_rewards * user_weights))
             
             # Compute rewards for new action across all users
             new_action_rewards = self._compute_action_rewards_for_users(action_to_add, users, reward_model)
@@ -175,17 +184,18 @@ class ActionSelector:
             for i, user in enumerate(users):
                 current_best = current_user_max_rewards[i]
                 new_reward = new_action_rewards[i]
+                weight = user_weights[i] if i < len(user_weights) else 1.0
                 
                 if self.value_mode == 'causal_value' and control_action is not None:
                     control_reward = reward_model.predict(user, control_action)
                     # Marginal gain is improvement in uplift
                     new_uplift = new_reward - control_reward
                     current_uplift = current_best - control_reward
-                    marginal_gain += max(0, new_uplift - current_uplift)
+                    marginal_gain += weight * max(0, new_uplift - current_uplift)
                 else:
                     # Marginal gain is improvement in direct reward
-                    marginal_gain += max(0, new_reward - current_best)
-            
+                    marginal_gain += weight * max(0, new_reward - current_best)
+
             return marginal_gain
             
         except Exception as e:
@@ -213,22 +223,23 @@ class ActionSelector:
         try:
             # Compute reward matrix: (users, actions)
             reward_matrix = np.zeros((len(users), len(action_bank)))
-            
+
             # For each action, compute rewards for all users at once
             for j, action in enumerate(action_bank):
                 action_rewards = self._compute_action_rewards_for_users(action, users, reward_model)
                 reward_matrix[:, j] = action_rewards
-            
+
             # Find best action for each user
             user_max_rewards = np.max(reward_matrix, axis=1)
-            
+            user_weights = np.array([getattr(u, 'weight', 1.0) for u in users], dtype=float)
+
             # Apply value mode
             if self.value_mode == 'causal_value' and control_action is not None:
                 control_rewards = self._compute_action_rewards_for_users(control_action, users, reward_model)
-                total_value = np.sum(user_max_rewards - control_rewards)
+                total_value = np.sum((user_max_rewards - control_rewards) * user_weights)
             else:
-                total_value = np.sum(user_max_rewards)
-                        
+                total_value = np.sum(user_max_rewards * user_weights)
+
             return float(total_value)
             
         except Exception as e:
@@ -283,7 +294,8 @@ class ActionSelector:
         return np.max(reward_matrix, axis=1)
     
     def _compute_user_max_rewards_debug(self, action_bank: List[Action], users: List[User],
-                                      reward_model: BaseUserPreferenceModel) -> tuple:
+                                      reward_model: BaseUserPreferenceModel,
+                                      user_weights: Optional[np.ndarray] = None) -> tuple:
         """
         DEBUG VERSION: Compute maximum reward for each user and track best actions.
         
@@ -326,9 +338,11 @@ class ActionSelector:
         best_action_ids = [action_bank[idx].action_id for idx in best_action_indices]
         
         # Count how many users each action is best for
-        for action_id in best_action_ids:
-            action_stats[action_id]['users_best_count'] += 1
-        
+        if user_weights is None:
+            user_weights = np.ones(len(users))
+        for action_id, weight in zip(best_action_ids, user_weights):
+            action_stats[action_id]['users_best_count'] += float(weight)
+
         return max_rewards, np.array(best_action_ids), reward_matrix, action_stats
 
     
@@ -353,26 +367,29 @@ class ActionSelector:
         try:
             # Calculate total value using direct reward-based assignment
             total_value = self._calculate_bank_value(action_bank, users, reward_model, control_action)
-            
-            # Calculate average value per user
-            avg_value_per_user = total_value / len(users) if users else 0.0
-            
+
+            user_weights = np.array([getattr(u, 'weight', 1.0) for u in users], dtype=float)
+            total_weight = float(user_weights.sum()) if len(user_weights) else float(len(users))
+
+            # Calculate average value per (weighted) user
+            avg_value_per_user = total_value / total_weight if total_weight else 0.0
+
             # Calculate direct assignments (each user gets their best action)
-            action_usage = {}
-            for user in users:
+            action_usage: Dict[str, float] = {}
+            for user, weight in zip(users, user_weights):
                 best_reward = 0.0
                 best_action_id = None
-                
+
                 for action in action_bank:
                     # Use direct prediction (no diversity penalty)
                     reward = reward_model.predict(user, action)
-                    
+
                     if reward > best_reward:
                         best_reward = reward
                         best_action_id = action.action_id
-                
+
                 if best_action_id:
-                    action_usage[best_action_id] = action_usage.get(best_action_id, 0) + 1
+                    action_usage[best_action_id] = action_usage.get(best_action_id, 0.0) + float(weight)
             
             # Coverage is always 100% with direct assignment (everyone gets assigned)
             coverage = 1.0
@@ -391,6 +408,7 @@ class ActionSelector:
                 'text_diversity': text_diversity,
                 'action_count': len(action_bank),
                 'action_usage': action_usage,
+                'total_weight': total_weight,
                 'value_mode': self.value_mode
             }
             
@@ -454,6 +472,8 @@ class ActionSelector:
         evaluation = self.evaluate_action_bank(selected_actions, users, reward_model, control_action)
         # Compute uncertainty summaries if the model supports it
         uncertainty = self._summarize_uncertainty(selected_actions, users, reward_model)
+
+        total_weight = float(sum(getattr(u, 'weight', 1.0) for u in users)) if users else 0.0
         
         return {
             'selected_actions': selected_actions,
@@ -463,6 +483,7 @@ class ActionSelector:
                 'pool_size': len(action_pool),
                 'selected_count': len(selected_actions),
                 'users_count': len(users),
+                'total_weight': total_weight,
                 'value_mode': self.value_mode,
                 'diversity_weight': reward_model.diversity_weight
             }

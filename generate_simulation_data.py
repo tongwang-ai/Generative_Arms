@@ -15,6 +15,7 @@ by running the separate runner that reads from this folder.
 import os
 import json
 import argparse
+import shutil
 from datetime import datetime
 from typing import Dict, Any
 
@@ -33,6 +34,11 @@ def main():
     parser.add_argument('--output_root', type=str, default=os.path.join('data', 'simulation_data'), help='Root folder for generated data')
     parser.add_argument('--id', type=str, default=None, help='Optional unique id for this dataset (default: timestamp)')
     parser.add_argument('--openai_api_key', type=str, default=None, help='OpenAI API key (optional)')
+    parser.add_argument('--number_of_segments', type=int, default=None, help='Number of segments to record (default: 1024)')
+    parser.add_argument('--users_per_segment_per_iteration', type=float, default=None,
+                        help='Portion or count of users targeted per segment when running simulations from data')
+    parser.add_argument('--use_static_user_base', action='store_true',
+                        help='Reuse the same user cohort across iterations in downstream simulations')
 
     # Ground truth model options
     parser.add_argument('--ground_truth_type', choices=['mixture_of_experts', 'gmm'], default='mixture_of_experts', help='Ground truth model type')
@@ -51,6 +57,7 @@ def main():
         ground_truth_config = {
             'n_components': args.gmm_components
         }
+    ground_truth_config['user_dim'] = 30
 
     # Instantiate CompanySimulator to leverage initialization (embeddings, action bank saving)
     company_sim = CompanySimulator(
@@ -63,24 +70,40 @@ def main():
         random_seed=42,
         batch_update_size=1,
         use_chatgpt_actions=True,
-        performance_tracking_interval=5000
+        performance_tracking_interval=5000,
+        use_segment_data=True,
+        number_of_segments=args.number_of_segments,
+        users_per_segment_per_iteration=args.users_per_segment_per_iteration,
+        use_static_user_base=args.use_static_user_base
     )
 
     # Initialize to create and save the initial action bank
     print("=== Generating initial action bank ===")
     company_sim.initialize_simulation(n_users=args.users, n_initial_actions=args.initial_actions)
 
+    # Prepare base users if static population requested
+    base_users_file = None
+    base_segment_file = None
+    if args.use_static_user_base:
+        base_users_file = os.path.join(data_dir, 'initialization', 'users', 'users.json')
+        base_segment_file = os.path.join(data_dir, 'initialization', 'users', 'segment_summary.json')
+        if not os.path.exists(base_users_file):
+            raise FileNotFoundError("Static user base requested but initialization/users/users.json is missing")
+
     # Generate users for each iteration and save only user data (no simulation, no observations)
-    print(f"\n=== Generating users for {args.iterations} iterations ===")
+    print(f"\n=== Preparing users for {args.iterations} iterations ===")
     for iteration in range(1, args.iterations + 1):
-        print(f"- Iteration {iteration}: generating {args.users} users")
         iteration_dir = os.path.join(data_dir, f"iteration_{iteration}")
         users_dir = os.path.join(iteration_dir, "users")
         ensure_dir(users_dir)
 
-        users = company_sim.user_generator.generate_users(args.users)
+        if args.use_static_user_base:
+            print(f"- Iteration {iteration}: reusing static user cohort")
+            users = company_sim.user_generator.load_users(base_users_file)
+        else:
+            print(f"- Iteration {iteration}: generating {args.users} users")
+            users = company_sim.user_generator.generate_users(args.users)
 
-        # Save users and segment summary (reuse simulator helpers)
         users_file = os.path.join(users_dir, "users.json")
         company_sim.user_generator.save_users(users, users_file)
 
@@ -116,6 +139,11 @@ def main():
             'random_seed': 42
         },
         'action_embeddings': action_bank_meta,
+        'segment_options': {
+            'number_of_segments': args.number_of_segments or 1024,
+            'users_per_segment_per_iteration': args.users_per_segment_per_iteration,
+            'use_static_user_base': args.use_static_user_base
+        },
         'notes': 'This folder contains only initial action bank and user cohorts per iteration.'
     }
 

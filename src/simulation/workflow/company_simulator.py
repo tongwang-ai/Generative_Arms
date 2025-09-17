@@ -4,7 +4,7 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 from tqdm import tqdm
 
@@ -30,7 +30,11 @@ class CompanySimulator:
                  random_seed: int = 42,
                  batch_update_size: int = 1,
                  use_chatgpt_actions: bool = True,
-                 performance_tracking_interval: int = 100):
+                 performance_tracking_interval: int = 100,
+                 use_segment_data: bool = False,
+                 number_of_segments: Optional[int] = None,
+                 users_per_segment_per_iteration: Optional[float] = None,
+                 use_static_user_base: bool = False):
         """
         Initialize company simulator.
         
@@ -55,6 +59,15 @@ class CompanySimulator:
         self.batch_update_size = batch_update_size
         self.use_chatgpt_actions = use_chatgpt_actions
         self.performance_tracking_interval = performance_tracking_interval
+        self.use_segment_data = use_segment_data
+        if number_of_segments is not None and number_of_segments != 1024:
+            raise ValueError("Only 1024 segments are supported in the current configuration.")
+        self.number_of_segments = 1024
+        self.users_per_segment_per_iteration = users_per_segment_per_iteration
+        self.use_static_user_base = use_static_user_base
+        self._base_users: List[MeaningfulUser] = []
+        self.segment_history: List[Dict[str, Any]] = []
+        self.rng = np.random.default_rng(random_seed)
         np.random.seed(random_seed)
         
         # Create results directory
@@ -81,7 +94,7 @@ class CompanySimulator:
         if ground_truth_config is None:
             ground_truth_config = {}
         
-        # Use dimensions from config (set by run_full_simulation.py)
+        # Use dimensions from config (set by run_simulation_from_data.py)
         # Fall back to detection if not provided
         if 'action_dim' not in ground_truth_config:
             embedding_model = self.action_embedder.model
@@ -101,6 +114,7 @@ class CompanySimulator:
             random_seed=random_seed,
             **ground_truth_config
         )
+        self.segment_feature_names = self.user_generator.segment_feature_names
         
         # Simulation state
         self.current_action_bank = []
@@ -169,13 +183,37 @@ class CompanySimulator:
             'n_users_per_iteration': self.n_users,
             'n_initial_actions': self.n_initial_actions,
             'initial_action_bank_size': len(self.current_action_bank),
-            'embedding_model': self.action_embedder.model
+            'embedding_model': self.action_embedder.model,
+            'use_segment_data': self.use_segment_data,
+            'number_of_segments': self.number_of_segments,
+            'users_per_segment_per_iteration': self.users_per_segment_per_iteration,
+            'use_static_user_base': self.use_static_user_base
         }
-        
+
         summary_file = os.path.join(init_dir, "initialization_summary.json")
         with open(summary_file, 'w') as f:
             json.dump(init_summary, f, indent=2)
-        
+
+        # Optionally pre-generate a reusable user base when static cohorts are requested
+        if self.use_static_user_base:
+            base_users_dir = os.path.join(init_dir, "users")
+            os.makedirs(base_users_dir, exist_ok=True)
+
+            print("Generating static user base for all iterations...")
+            self._base_users = self.user_generator.generate_users(self.n_users)
+            base_users_file = os.path.join(base_users_dir, "users.json")
+            self.user_generator.save_users(self._base_users, base_users_file)
+
+            base_segments = self.user_generator.group_users_by_segment(self._base_users)
+            base_segment_summary = self.user_generator.build_segment_summary_payload(
+                base_segments, len(self._base_users)
+            )
+            with open(os.path.join(base_users_dir, "segment_summary.json"), 'w') as f:
+                json.dump(base_segment_summary, f, indent=2)
+
+            print(f"Static user base created with {len(self._base_users)} users across "
+                  f"{len(base_segments)} segments")
+
         init_time = time.time() - init_start
         print(f"Initialization complete!")
         print(f"  Configuration: {self.n_initial_actions} initial actions, {self.n_users} users per iteration")
@@ -185,7 +223,286 @@ class CompanySimulator:
         print(f"  Users will be generated fresh for each iteration")
         
         return init_summary
-    
+
+    def _prepare_iteration_users(self, iteration: int) -> Tuple[List[MeaningfulUser], Dict[str, List[MeaningfulUser]], Dict[str, List[MeaningfulUser]]]:
+        """Generate or reuse users and return targeted subsets by segment."""
+        if self.use_static_user_base and self._base_users:
+            base_population = self._base_users
+        else:
+            base_population = self.user_generator.generate_users(self.n_users)
+            if self.use_static_user_base:
+                self._base_users = base_population
+
+        # Reset weights for consistency across iterations
+        for user in base_population:
+            user.weight = 1.0
+
+        segments = self.user_generator.group_users_by_segment(base_population)
+
+        targeted_segments: Dict[str, List[MeaningfulUser]] = {}
+        targeted_users: List[MeaningfulUser] = []
+
+        for segment_id, members in segments.items():
+            selected_members = self._sample_segment_users(segment_id, members)
+            targeted_segments[segment_id] = selected_members
+            for user in selected_members:
+                user.weight = 1.0
+            targeted_users.extend(selected_members)
+
+        if not targeted_users:
+            # Fallback to full population if sampling removed everything
+            targeted_users = base_population
+            targeted_segments = segments
+
+        return targeted_users, segments, targeted_segments
+
+    def _sample_segment_users(self, segment_id: str, members: List[MeaningfulUser]) -> List[MeaningfulUser]:
+        """Sample a subset of users from a segment based on configuration."""
+        if not members:
+            return []
+
+        sample_param = self.users_per_segment_per_iteration
+        if sample_param is None:
+            return list(members)
+
+        if isinstance(sample_param, float) and sample_param < 1.0:
+            sample_size = max(1, int(round(len(members) * sample_param)))
+        else:
+            sample_size = int(sample_param)
+            sample_size = max(1, sample_size)
+
+        sample_size = min(sample_size, len(members))
+        if sample_size >= len(members):
+            return list(members)
+
+        indices = self.rng.choice(len(members), size=sample_size, replace=False)
+        return [members[int(idx)] for idx in indices]
+
+    def _save_segment_data(self, iteration: int, iteration_dir: str,
+                           all_segments: Dict[str, List[MeaningfulUser]],
+                           targeted_segments: Dict[str, List[MeaningfulUser]],
+                           observations_df: pd.DataFrame,
+                           current_actions: List[EmbeddedAction]):
+        """Persist segment-level aggregates for downstream algorithms."""
+        segment_dir = os.path.join(iteration_dir, "segment_data")
+        os.makedirs(segment_dir, exist_ok=True)
+
+        action_embedding_lookup = {
+            action.action_id: action.embedding for action in current_actions
+        }
+
+        total_population = sum(len(members) for members in all_segments.values())
+        population_summary = self.user_generator.build_segment_summary_payload(all_segments, total_population)
+        targeted_summary = self.user_generator.build_segment_summary_payload(targeted_segments, total_population)
+
+        combined_summary: Dict[str, Any] = {}
+        segment_rows: List[Dict[str, Any]] = []
+        feature_vector_length = 0
+
+        for segment_id, members in population_summary.items():
+            population_count = len(all_segments.get(segment_id, []))
+            targeted_count = len(targeted_segments.get(segment_id, []))
+            targeted_stats = targeted_summary.get(segment_id)
+            feature_means = None
+            if targeted_stats and targeted_stats.get('feature_mean'):
+                feature_means = targeted_stats['feature_mean']
+            elif members.get('feature_mean'):
+                feature_means = members['feature_mean']
+
+            if feature_means is None:
+                # Fallback to zeros if features unavailable
+                dim = len(all_segments.get(segment_id, [])[0].feature_vector) if all_segments.get(segment_id) else 0
+                feature_means = [0.0] * dim
+
+            feature_vector_length = max(feature_vector_length, len(feature_means))
+
+            combined_summary[segment_id] = {
+                'population': members,
+                'targeted': targeted_stats,
+                'population_count': population_count,
+                'targeted_count': targeted_count,
+                'targeting_rate': targeted_count / population_count if population_count else 0.0,
+                'feature_mean_for_model': feature_means
+            }
+
+            segment_rows.append({
+                'segment_id': segment_id,
+                'feature_vector': feature_means,
+                'population_count': population_count,
+                'targeted_count': targeted_count,
+                'weight': targeted_count if targeted_count > 0 else population_count,
+                'feature_stats': targeted_stats or members
+            })
+
+        # Save summary JSON for transparency
+        with open(os.path.join(segment_dir, "segment_summary.json"), 'w') as f:
+            json.dump({
+                'iteration': iteration,
+                'segments': combined_summary,
+                'total_population': total_population
+            }, f, indent=2)
+
+        # Build per-feature statistics DataFrame
+        feature_stats_df = self.user_generator.build_segment_feature_dataframe(targeted_segments)
+        if feature_stats_df.empty:
+            feature_stats_df = self.user_generator.build_segment_feature_dataframe(all_segments)
+
+        if not observations_df.empty and not feature_stats_df.empty:
+            segment_conversion_rates = observations_df.groupby('segment_id')['reward'].mean().to_dict()
+            feature_stats_df['conversion_rate'] = feature_stats_df['segment_id'].map(lambda sid: float(segment_conversion_rates.get(sid, 0.0)))
+            feature_stats_df['expected_reward'] = feature_stats_df['conversion_rate']
+            feature_stats_df['target_metric_value'] = feature_stats_df['conversion_rate']
+            feature_stats_df['iteration'] = iteration
+        else:
+            feature_stats_df['conversion_rate'] = 0.0
+            feature_stats_df['expected_reward'] = 0.0
+            feature_stats_df['target_metric_value'] = 0.0
+            feature_stats_df['iteration'] = iteration
+
+        feature_stats_path = os.path.join(segment_dir, "feature_segment_stats.csv")
+        feature_stats_df.to_csv(feature_stats_path, index=False)
+
+        # Prepare observations DataFrame with parsed features
+        obs_df = observations_df.copy()
+        if not obs_df.empty:
+            def _ensure_array(val):
+                if isinstance(val, str):
+                    return np.array([float(x) for x in val.split(',')])
+                if isinstance(val, list):
+                    return np.array(val)
+                return val
+
+            obs_df['user_features_vector'] = obs_df['user_features'].apply(_ensure_array)
+            obs_df['segment_id'] = obs_df['segment_id'].fillna('unknown')
+
+        # Aggregate per segment-action
+        segment_action_records: List[Dict[str, Any]] = []
+        feature_segment_action_records: List[Dict[str, Any]] = []
+
+        if not obs_df.empty:
+            grouped = obs_df.groupby(['segment_id', 'action_id'])
+            for (segment_id, action_id), group in grouped:
+                conversions = float(group['reward'].sum())
+                count = int(len(group))
+                conversion_rate = float(group['reward'].mean()) if count else 0.0
+                targeted_count = combined_summary.get(segment_id, {}).get('targeted_count', count)
+                population_count = combined_summary.get(segment_id, {}).get('population_count', targeted_count)
+                action_probability = conversion_rate * 0.0
+                if targeted_count:
+                    action_probability = count / targeted_count
+
+                feature_means = combined_summary.get(segment_id, {}).get('feature_mean_for_model', [])
+                segment_action_records.append({
+                    'segment_id': segment_id,
+                    'action_id': action_id,
+                    'expected_reward': conversion_rate,
+                    'target_metric_value': conversion_rate,
+                    'conversion_rate': conversion_rate,
+                    'count': count,
+                    'conversions': conversions,
+                    'targeted_count': targeted_count,
+                    'segment_population': population_count,
+                    'action_probability': action_probability,
+                    'feature_vector': ','.join(map(str, feature_means)),
+                    'action_embedding': ','.join(map(str, action_embedding_lookup.get(action_id, []))),
+                    'iteration': iteration
+                })
+
+                feature_matrix = np.vstack(group['user_features_vector'].values)
+                feature_stats = {
+                    'mean': np.mean(feature_matrix, axis=0),
+                    'median': np.median(feature_matrix, axis=0),
+                    'p25': np.percentile(feature_matrix, 25, axis=0),
+                    'p75': np.percentile(feature_matrix, 75, axis=0),
+                    'min': np.min(feature_matrix, axis=0),
+                    'max': np.max(feature_matrix, axis=0)
+                }
+
+                for idx in range(feature_matrix.shape[1]):
+                    feature_segment_action_records.append({
+                        'segment_id': segment_id,
+                        'action_id': action_id,
+                        'feature_index': idx,
+                        'feature_value_mean': float(feature_stats['mean'][idx]),
+                        'feature_value_median': float(feature_stats['median'][idx]),
+                        'feature_value_p25': float(feature_stats['p25'][idx]),
+                        'feature_value_p75': float(feature_stats['p75'][idx]),
+                        'feature_value_min': float(feature_stats['min'][idx]),
+                        'feature_value_max': float(feature_stats['max'][idx]),
+                        'expected_reward': conversion_rate,
+                        'target_metric_value': conversion_rate,
+                        'conversion_rate': conversion_rate,
+                        'count': count,
+                        'iteration': iteration
+                    })
+
+        segment_action_df = pd.DataFrame(segment_action_records)
+        segment_action_path = os.path.join(segment_dir, "segment_action_stats.csv")
+        if segment_action_records:
+            segment_action_df.to_csv(segment_action_path, index=False)
+        else:
+            # Create empty file with headers for consistency
+            pd.DataFrame(columns=[
+                'segment_id', 'action_id', 'expected_reward', 'target_metric_value', 'conversion_rate',
+                'count', 'conversions', 'targeted_count', 'segment_population', 'action_probability',
+                'feature_vector', 'action_embedding', 'iteration'
+            ]).to_csv(segment_action_path, index=False)
+
+        feature_segment_action_df = pd.DataFrame(feature_segment_action_records)
+        feature_segment_action_path = os.path.join(segment_dir, "feature_segment_action_stats.csv")
+        if feature_segment_action_records:
+            feature_segment_action_df.to_csv(feature_segment_action_path, index=False)
+        else:
+            pd.DataFrame(columns=[
+                'segment_id', 'action_id', 'feature_index', 'feature_value_mean',
+                'feature_value_median', 'feature_value_p25', 'feature_value_p75',
+                'feature_value_min', 'feature_value_max', 'expected_reward',
+                'target_metric_value', 'conversion_rate', 'count', 'iteration'
+            ]).to_csv(feature_segment_action_path, index=False)
+
+        # Save segment-centric payload for algorithm consumption
+        segment_users_payload = {
+            'iteration': iteration,
+            'feature_vector_length': feature_vector_length,
+            'segments': [
+                {
+                    'segment_id': row['segment_id'],
+                    'feature_vector': row['feature_vector'],
+                    'population_count': row['population_count'],
+                    'targeted_count': row['targeted_count'],
+                    'weight': row['weight'],
+                    'feature_stats': row['feature_stats']
+                }
+                for row in segment_rows
+            ]
+        }
+
+        segment_users_file = os.path.join(segment_dir, "segment_users.json")
+        with open(segment_users_file, 'w') as f:
+            json.dump(segment_users_payload, f, indent=2)
+
+        # Persist list for algorithm training convenience
+        training_file = os.path.join(segment_dir, "segment_action_observations.csv")
+        if segment_action_records:
+            segment_action_df.to_csv(training_file, index=False)
+        else:
+            pd.DataFrame(columns=[
+                'segment_id', 'action_id', 'expected_reward', 'target_metric_value', 'conversion_rate',
+                'count', 'conversions', 'targeted_count', 'segment_population', 'action_probability',
+                'feature_vector', 'action_embedding', 'iteration'
+            ]).to_csv(training_file, index=False)
+
+        self.segment_history.append({
+            'iteration': iteration,
+            'summary': combined_summary,
+            'files': {
+                'segment_summary': os.path.relpath(os.path.join(segment_dir, "segment_summary.json"), self.results_dir),
+                'segment_users': os.path.relpath(segment_users_file, self.results_dir),
+                'segment_action_stats': os.path.relpath(segment_action_path, self.results_dir),
+                'feature_segment_stats': os.path.relpath(feature_stats_path, self.results_dir),
+                'feature_segment_action_stats': os.path.relpath(feature_segment_action_path, self.results_dir)
+            }
+        })
     def filter_and_balance_actions(self, iteration_dir: str, 
                                  users: List[MeaningfulUser],
                                  min_conversion: float = 0.30, 
@@ -326,9 +643,13 @@ class CompanySimulator:
         iteration_dir = os.path.join(self.results_dir, f"iteration_{iteration}")
         os.makedirs(iteration_dir, exist_ok=True)
         
-        # Generate users for this iteration (logging handled inside generator)
-        iteration_users = self.user_generator.generate_users(self.n_users)
-        
+        # Prepare users for this iteration (optionally reusing and segmenting the base population)
+        iteration_users, all_segments, targeted_segments = self._prepare_iteration_users(iteration)
+        total_population = sum(len(users) for users in all_segments.values()) or len(iteration_users)
+        print(f"Prepared {len(iteration_users)} targeted users across {len(targeted_segments)} segments"
+              f" (population pool: {total_population})")
+        user_segment_map = {user.user_id: user.segment for user in iteration_users}
+
         # Save iteration users
         users_dir = os.path.join(iteration_dir, "users")
         os.makedirs(users_dir, exist_ok=True)
@@ -434,14 +755,26 @@ class CompanySimulator:
                 'action_text': obs.action_text,
                 'reward': obs.reward,
                 'timestamp': obs.timestamp,
-                'iteration': obs.iteration
+                'iteration': obs.iteration,
+                'segment_id': user_segment_map.get(obs.user_id, 'unknown')
             }
             obs_data.append(obs_dict)
         
         obs_df = pd.DataFrame(obs_data)
         obs_file = os.path.join(observations_dir, "observations.csv")
         obs_df.to_csv(obs_file, index=False)
-        
+
+        # Persist aggregated segment-level datasets when requested
+        if self.use_segment_data or self.users_per_segment_per_iteration is not None:
+            self._save_segment_data(
+                iteration,
+                iteration_dir,
+                all_segments,
+                targeted_segments,
+                obs_df,
+                self.current_action_bank
+            )
+
         # Save as JSON for detailed analysis
         obs_json_file = os.path.join(observations_dir, "observations.json")
         with open(obs_json_file, 'w') as f:
@@ -479,7 +812,10 @@ class CompanySimulator:
                 'total_reward': total_reward,
                 'avg_reward': avg_reward,
                 'cumulative_reward': strategy_stats['total_reward'],
-                'cumulative_avg_reward': strategy_stats['avg_reward']
+                'cumulative_avg_reward': strategy_stats['avg_reward'],
+                'targeted_user_count': len(iteration_users),
+                'segment_population': total_population,
+                'num_segments': len(targeted_segments)
             },
             'strategy_state': strategy_state,
             'action_bank_size': len(self.current_action_bank),
@@ -488,7 +824,8 @@ class CompanySimulator:
                 'observations_csv': obs_file,
                 'observations_json': obs_json_file,
                 'action_bank': action_bank_file,
-                'strategy_checkpoint': strategy_file
+                'strategy_checkpoint': strategy_file,
+                'segment_data_dir': os.path.join(iteration_dir, "segment_data") if (self.use_segment_data or self.users_per_segment_per_iteration is not None) else None
             }
         }
         

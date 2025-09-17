@@ -65,8 +65,16 @@ def main():
     parser.add_argument('--targeted_ratio', type=float, default=0.3, help='Fraction of targeted actions in pool (default: 0.3)')
     parser.add_argument('--reward_model_type', choices=['neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'], default='lightgbm', help='Reward model type')
     parser.add_argument('--bnn_mc_samples', type=int, default=30, help='MC Dropout samples for bayesian_neural (default: 30)')
+    parser.add_argument('--task_type', choices=['binary', 'regression'], default='binary', help='User preference task type (default: binary)')
     parser.add_argument('--use_pca', action='store_true', default=False, help='Apply PCA to action embeddings before models')
     parser.add_argument('--pca_components', type=int, default=50, help='Number of PCA components for action embeddings (default: 50)')
+
+    parser.add_argument('--use_segment', action='store_true', help='Operate on segment-level aggregates if available')
+    parser.add_argument('--number_of_segments', type=int, default=None, help='Override number of segments when aggregating users')
+    parser.add_argument('--users_per_segment_per_iteration', type=float, default=None,
+                        help='Portion (0-1) or count of users targeted per segment each iteration')
+    parser.add_argument('--use_static_user_base', action='store_true',
+                        help='Reuse the same user cohort across iterations')
 
     # Company strategy
     parser.add_argument('--company_strategy', choices=['linucb', 'bootstrapped_dqn', 'legacy'], default='linucb', help='Company contextual bandit strategy (default: linucb)')
@@ -76,11 +84,26 @@ def main():
     args = parser.parse_args()
 
     data_cfg = load_data_config(args.data_dir)
+    segment_options = data_cfg.get('segment_options', {})
+    dataset_number_of_segments = segment_options.get('number_of_segments')
+    dataset_users_per_segment = segment_options.get('users_per_segment_per_iteration')
+    dataset_use_static = segment_options.get('use_static_user_base', False)
 
     # Infer iterations
     iterations = args.iterations
     if iterations is None:
         iterations = int(data_cfg.get('n_iterations', 4))
+
+    use_segment = args.use_segment
+    number_of_segments = args.number_of_segments if args.number_of_segments is not None else dataset_number_of_segments
+    users_per_segment = args.users_per_segment_per_iteration if args.users_per_segment_per_iteration is not None else dataset_users_per_segment
+    use_static_user_base = args.use_static_user_base or (use_segment and dataset_use_static)
+    if use_segment:
+        if number_of_segments is None:
+            number_of_segments = 1024
+    else:
+        users_per_segment = None
+        use_static_user_base = False
 
     # Determine embedding dimension from saved action bank
     init_action_bank_file = os.path.join(args.data_dir, 'initialization', 'action_bank', 'action_bank.json')
@@ -98,7 +121,10 @@ def main():
         'reward_model_type': args.reward_model_type,
         'bnn_mc_samples': getattr(args, 'bnn_mc_samples', 30),
         'action_dim': action_dim,
-        'user_dim': 8
+        'user_dim': 30,
+        'use_segment_data': use_segment,
+        'segment_feature_dim': 30,
+        'task_type': args.task_type
     }
     algorithm_config['action_strategy_mix'] = {
         'exploit': args.exploit_ratio,
@@ -128,7 +154,7 @@ def main():
     ground_truth_type = (data_cfg.get('ground_truth') or {}).get('type', 'mixture_of_experts')
     ground_truth_config = (data_cfg.get('ground_truth') or {}).get('config', {})
     ground_truth_config['action_dim'] = action_dim
-    ground_truth_config['user_dim'] = detected_user_dim or 8
+    ground_truth_config['user_dim'] = detected_user_dim or algorithm_config['user_dim']
 
     # Build a fresh results directory for this run
     timestamp = datetime.now().strftime("from_data_%Y%m%d_%H%M%S")
@@ -144,7 +170,12 @@ def main():
         'algorithm_config': algorithm_config,
         'ground_truth_type': ground_truth_type,
         'ground_truth_config': ground_truth_config,
-        'openai_api_key_provided': bool(args.openai_api_key)
+        'openai_api_key_provided': bool(args.openai_api_key),
+        'use_segment_data': use_segment,
+        'number_of_segments': number_of_segments,
+        'users_per_segment_per_iteration': users_per_segment,
+        'use_static_user_base': use_static_user_base,
+        'task_type': args.task_type
     }
     with open(os.path.join(run_results_dir, 'run_from_data_config.json'), 'w') as f:
         json.dump(run_config, f, indent=2)
@@ -157,7 +188,11 @@ def main():
         strategy_config={'alpha': args.alpha, 'use_pca': True, 'pca_components': 128} if args.company_strategy == 'linucb' else {'n_heads': args.n_heads},
         ground_truth_type=ground_truth_type,
         ground_truth_config=ground_truth_config,
-        random_seed=42
+        random_seed=42,
+        use_segment_data=use_segment,
+        number_of_segments=number_of_segments,
+        users_per_segment_per_iteration=users_per_segment,
+        use_static_user_base=use_static_user_base
     )
 
     algorithm = PersonalizedMarketingAlgorithm(

@@ -66,7 +66,12 @@ def run_random_baseline_from_data(data_dir: str,
                                  company_strategy: str = "linucb",
                                  strategy_config: Dict[str, Any] = None,
                                  ground_truth_type: str = "mixture_of_experts",
-                                 ground_truth_config: Dict[str, Any] = None) -> Dict[str, Any]:
+                                 ground_truth_config: Dict[str, Any] = None,
+                                 use_segment_data: bool = False,
+                                 number_of_segments: int = None,
+                                 users_per_segment_per_iteration: float = None,
+                                 use_static_user_base: bool = False,
+                                 task_type: str = 'binary') -> Dict[str, Any]:
     """
     Run random baseline simulation from pre-generated data.
     """
@@ -77,6 +82,10 @@ def run_random_baseline_from_data(data_dir: str,
     print(f"📁 Data source: {data_dir}")
     print(f"🕐 Simulation started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
+    if algorithm_config is None:
+        algorithm_config = {}
+    algorithm_config.setdefault('task_type', task_type)
+
     # Initialize components
     print(f"\n1. Initializing Components...")
     print(f"   Company strategy: {company_strategy}")
@@ -91,7 +100,11 @@ def run_random_baseline_from_data(data_dir: str,
         strategy_config=strategy_config,
         ground_truth_type=ground_truth_type,
         ground_truth_config=ground_truth_config,
-        random_seed=42
+        random_seed=42,
+        use_segment_data=use_segment_data,
+        number_of_segments=number_of_segments,
+        users_per_segment_per_iteration=users_per_segment_per_iteration,
+        use_static_user_base=use_static_user_base
     )
     
     # Initialize random baseline algorithm
@@ -314,6 +327,13 @@ def main():
     # Random baseline specific options
     parser.add_argument('--random_actions_per_iteration', type=int, default=20,
                        help='Number of random actions to generate per iteration (default: 20)')
+
+    parser.add_argument('--use_segment', action='store_true', help='Operate using segment-level aggregates if available')
+    parser.add_argument('--task_type', choices=['binary', 'regression'], default='binary', help='User preference task type (default: binary)')
+    parser.add_argument('--number_of_segments', type=int, default=None, help='Override number of segments for aggregation')
+    parser.add_argument('--users_per_segment_per_iteration', type=float, default=None,
+                        help='Portion (0-1) or count of users targeted per segment each iteration')
+    parser.add_argument('--use_static_user_base', action='store_true', help='Reuse the same user cohort across iterations')
     
     # Company strategy options
     parser.add_argument('--company_strategy', choices=['linucb', 'bootstrapped_dqn', 'legacy'],
@@ -327,11 +347,26 @@ def main():
     
     # Load data configuration
     data_cfg = load_data_config(args.data_dir)
+    segment_options = data_cfg.get('segment_options', {})
+    dataset_number_of_segments = segment_options.get('number_of_segments')
+    dataset_users_per_segment = segment_options.get('users_per_segment_per_iteration')
+    dataset_use_static = segment_options.get('use_static_user_base', False)
     
     # Infer iterations from data config if not provided
     iterations = args.iterations
     if iterations is None:
         iterations = int(data_cfg.get('n_iterations', 4))
+
+    use_segment = args.use_segment
+    number_of_segments = args.number_of_segments if args.number_of_segments is not None else dataset_number_of_segments
+    users_per_segment = args.users_per_segment_per_iteration if args.users_per_segment_per_iteration is not None else dataset_users_per_segment
+    use_static_user_base = args.use_static_user_base or (use_segment and dataset_use_static)
+    if use_segment:
+        if number_of_segments is None:
+            number_of_segments = 1024
+    else:
+        users_per_segment = None
+        use_static_user_base = False
     
     # Determine embedding dimension from saved action bank
     init_action_bank_file = os.path.join(args.data_dir, 'initialization', 'action_bank', 'action_bank.json')
@@ -347,7 +382,10 @@ def main():
         'action_pool_size': args.random_actions_per_iteration,  # Generate only what we need
         'random_seed': 42,
         'action_dim': action_dim,
-        'user_dim': 8
+        'user_dim': 30,
+        'use_segment_data': use_segment,
+        'segment_feature_dim': 30,
+        'task_type': args.task_type
     }
     
     # Configure company strategy
@@ -361,7 +399,7 @@ def main():
     ground_truth_type = (data_cfg.get('ground_truth') or {}).get('type', 'mixture_of_experts')
     ground_truth_config = (data_cfg.get('ground_truth') or {}).get('config', {})
     ground_truth_config['action_dim'] = action_dim
-    ground_truth_config['user_dim'] = 8
+    ground_truth_config['user_dim'] = 30
     
     # Get OpenAI API key
     openai_api_key = args.openai_api_key or os.getenv('OPENAI_API_KEY')
@@ -388,7 +426,12 @@ def main():
         "ground_truth_config": ground_truth_config,
         "algorithm_config": algorithm_config,
         "data_config": data_cfg,
-        "openai_api_key_provided": openai_api_key is not None
+        "openai_api_key_provided": openai_api_key is not None,
+        "use_segment_data": use_segment,
+        "number_of_segments": number_of_segments,
+        "users_per_segment_per_iteration": users_per_segment,
+        "use_static_user_base": use_static_user_base,
+        "task_type": args.task_type
     }
     
     config_file = os.path.join(unique_results_dir, "random_baseline_from_data_config.json")
@@ -410,7 +453,12 @@ def main():
         company_strategy=args.company_strategy,
         strategy_config=strategy_config,
         ground_truth_type=ground_truth_type,
-        ground_truth_config=ground_truth_config
+        ground_truth_config=ground_truth_config,
+        use_segment_data=use_segment,
+        number_of_segments=number_of_segments,
+        users_per_segment_per_iteration=users_per_segment,
+        use_static_user_base=use_static_user_base,
+        task_type=args.task_type
     )
     
     return results

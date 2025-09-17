@@ -55,6 +55,8 @@ class PersonalizedMarketingAlgorithm:
             'value_mode': 'direct_reward',
             'random_seed': 42,
             'reward_model_type': 'lightgbm',  # 'lightgbm' or 'simple'
+            'use_segment_data': False,
+            'segment_feature_dim': 30,
             # PCA configuration
             'pca_config': {
                 'use_pca': False,
@@ -64,6 +66,13 @@ class PersonalizedMarketingAlgorithm:
         
         self.config = {**default_config, **(algorithm_config or {})}
         
+        self.task_type = self.config.get('task_type', 'binary')
+        
+        self.use_segment_data = self.config.get('use_segment_data', False)
+        self.segment_feature_dim = self.config.get('segment_feature_dim', 30)
+        if self.use_segment_data:
+            self.config['user_dim'] = self.segment_feature_dim
+
         # Initialize algorithm components
         reward_model_type = self.config.get('reward_model_type', 'lightgbm')
         pca_config = self.config.get('pca_config', {})
@@ -75,7 +84,9 @@ class PersonalizedMarketingAlgorithm:
                 diversity_weight=self.config['diversity_weight'],
                 random_seed=self.config['random_seed'],
                 use_pca=pca_config.get('use_pca', False),
-                pca_components=pca_config.get('pca_components', 50)
+                pca_components=pca_config.get('pca_components', 50),
+                task_type=self.task_type,
+                lightgbm_config=self.config.get('lightgbm_config')
             )
         elif reward_model_type == 'neural':
             self.reward_model = NeuralUserPreferenceModel(
@@ -136,6 +147,9 @@ class PersonalizedMarketingAlgorithm:
             raise ValueError(
                 f"Unknown reward model type: {reward_model_type}. Choose from: lightgbm, neural, linear, gaussian_process, bayesian_neural, ft_transformer"
             )
+
+        if self.task_type != 'binary' and reward_model_type != 'lightgbm':
+            raise ValueError("Regression task is currently supported only with the LightGBM reward model")
         
         # Choose embedding model to match configured action_dim to keep dimensions consistent
         action_dim_cfg = int(self.config.get('action_dim', 3072))
@@ -193,75 +207,121 @@ class PersonalizedMarketingAlgorithm:
         if not os.path.exists(iteration_dir):
             raise ValueError(f"Iteration directory not found: {iteration_dir}")
         
+        use_segment = self.use_segment_data
+        segment_data_dir = os.path.join(iteration_dir, "segment_data")
+
         # 1. Load observation data from company
-        observations_file = os.path.join(iteration_dir, "observations", "observations.csv")
-        if not os.path.exists(observations_file):
-            raise ValueError(f"Observations file not found: {observations_file}")
-        
         load_start = time.time()
-        print("1. Loading observation data from company...")
-        observations_df = pd.read_csv(observations_file)
-        
-        # Convert string representations of arrays back to arrays
-        if 'user_features' in observations_df.columns:
-            observations_df['user_features'] = observations_df['user_features'].apply(
-                lambda x: np.array([float(v) for v in x.split(',')]) if isinstance(x, str) else np.array(x)
-            )
-        if 'action_embedding' in observations_df.columns:
-            observations_df['action_embedding'] = observations_df['action_embedding'].apply(
-                lambda x: np.array([float(v) for v in x.split(',')]) if isinstance(x, str) else np.array(x)
-            )
-        
-        print(f"   Loaded {len(observations_df)} observations")
-        
-        # 2. Load users data from current iteration
-        users_file = os.path.join(self.results_dir, f"iteration_{iteration}", "users", "users.json")
+        if use_segment:
+            observations_file = os.path.join(segment_data_dir, "segment_action_observations.csv")
+            if not os.path.exists(observations_file):
+                raise ValueError(f"Segment observations file not found: {observations_file}")
+
+            print("1. Loading segment-level observation data...")
+            observations_df = pd.read_csv(observations_file)
+            if 'feature_vector' in observations_df.columns:
+                observations_df['segment_features'] = observations_df['feature_vector'].apply(self._parse_array)
+            if 'action_embedding' in observations_df.columns:
+                observations_df['action_embedding_array'] = observations_df['action_embedding'].apply(self._parse_array)
+            observations_df['reward'] = observations_df.get('conversion_rate', observations_df.get('reward', 0.0))
+            observations_df['sample_weight'] = observations_df.get('count', observations_df.get('targeted_count', 1.0))
+            effective_obs = float(observations_df['sample_weight'].sum()) if len(observations_df) else 0.0
+            print(f"   Loaded {len(observations_df)} segment-action aggregates (effective interactions: {effective_obs:.0f})")
+        else:
+            observations_file = os.path.join(iteration_dir, "observations", "observations.csv")
+            if not os.path.exists(observations_file):
+                raise ValueError(f"Observations file not found: {observations_file}")
+
+            print("1. Loading user-level observation data...")
+            observations_df = pd.read_csv(observations_file)
+            if 'user_features' in observations_df.columns:
+                observations_df['user_features'] = observations_df['user_features'].apply(self._parse_array)
+            if 'action_embedding' in observations_df.columns:
+                observations_df['action_embedding'] = observations_df['action_embedding'].apply(self._parse_array)
+            observations_df['reward'] = observations_df['reward'].astype(float)
+            observations_df['sample_weight'] = 1.0
+            print(f"   Loaded {len(observations_df)} observations")
+
+        # 2. Load users data from current iteration (user-level for evaluation)
+        users_file = os.path.join(iteration_dir, "users", "users.json")
         if not os.path.exists(users_file):
             raise ValueError(f"Users file not found: {users_file}")
-        
-        print("2. Loading user data...")
-        users = self._load_users(users_file)
-        print(f"   Loaded {len(users)} users")
-        
+
+        print("2. Loading user data for evaluation...")
+        evaluation_users = self._load_users(users_file)
+        print(f"   Loaded {len(evaluation_users)} users for evaluation")
+
+        if use_segment:
+            segment_users_file = os.path.join(segment_data_dir, "segment_users.json")
+            if not os.path.exists(segment_users_file):
+                raise ValueError(f"Segment users file not found: {segment_users_file}")
+            print("   Loading segment prototypes for selection...")
+            selection_users = self._load_segment_users(segment_users_file)
+            total_segment_weight = sum(user.weight for user in selection_users)
+            print(f"   Loaded {len(selection_users)} segments (total weight {total_segment_weight:.0f})")
+        else:
+            selection_users = evaluation_users
+
         # 3. Load current action bank
         action_bank_file = os.path.join(iteration_dir, "action_bank", "action_bank.json")
         if not os.path.exists(action_bank_file):
             raise ValueError(f"Action bank file not found: {action_bank_file}")
-        
+
         print("3. Loading current action bank...")
         current_actions = self._load_actions(action_bank_file)
         print(f"   Loaded {len(current_actions)} actions")
-        
+        load_time = time.time() - load_start
+        print(f"   ⏱️  Data loading completed in {load_time:.2f}s")
+
         # 4. Combine with historical data if available
         print("4. Combining with historical observation data...")
         all_observations = self._combine_historical_data(iteration)
-        print(f"   Total historical observations: {len(all_observations)}")
-        load_time = time.time() - load_start
-        print(f"   ⏱️  Data loading completed in {load_time:.2f}s")
-        
+        if use_segment and 'count' in all_observations.columns:
+            hist_weight = float(all_observations['count'].sum()) if len(all_observations) else 0.0
+        elif use_segment and 'sample_weight' in all_observations.columns:
+            hist_weight = float(all_observations['sample_weight'].sum()) if len(all_observations) else 0.0
+        else:
+            hist_weight = float(len(all_observations))
+        print(f"   Total historical records: {len(all_observations)} (effective weight {hist_weight:.0f})")
+
+        action_lookup = {action.action_id: action for action in current_actions}
+        training_df = self._prepare_training_dataframe(all_observations, action_lookup)
+        training_weight = float(training_df['sample_weight'].sum()) if 'sample_weight' in training_df.columns else float(len(training_df))
+        print(f"   Prepared {len(training_df)} training rows (effective weight {training_weight:.0f})")
+
         # 5. Train models on observation data
         print("5. Training models on observation data...")
         training_start = time.time()
-        training_results = self._train_models(all_observations, users, current_actions)
+        training_results = self._train_models(training_df)
         training_time = time.time() - training_start
         print(f"   ⏱️  Model training completed in {training_time:.2f}s")
         
         # 5.1. Evaluate trained reward model on ground truth
         print("5.1. Evaluating reward model on ground truth...")
         eval_start = time.time()
-        model_evaluation_results = self._evaluate_reward_model_on_ground_truth(users, current_actions)
+        model_evaluation_results = self._evaluate_reward_model_on_ground_truth(evaluation_users, current_actions)
         eval_time = time.time() - eval_start
         print(f"   ⏱️  Model evaluation completed in {eval_time:.2f}s")
         
         # 6. Generate new action bank
         print("6. Generating optimized action bank...")
         generation_start = time.time()
-        
-        # Get top performing actions from current bank
-        current_performance = observations_df.groupby('action_id')['reward'].agg(['mean', 'count'])
-        current_performance = current_performance[current_performance['count'] >= 3]  # Min 3 observations
-        top_actions = current_performance.sort_values('mean', ascending=False).head(10)
-        
+
+        # Get top performing actions from current data
+        if use_segment:
+            perf_df = observations_df.copy()
+            perf_df['weighted_reward'] = perf_df['reward'] * perf_df['sample_weight']
+            current_performance = perf_df.groupby('action_id').agg(
+                {'weighted_reward': 'sum', 'sample_weight': 'sum'}
+            )
+            current_performance = current_performance[current_performance['sample_weight'] > 0]
+            current_performance['mean'] = current_performance['weighted_reward'] / current_performance['sample_weight']
+            top_actions = current_performance.sort_values('mean', ascending=False).head(10)
+        else:
+            current_performance = observations_df.groupby('action_id')['reward'].agg(['mean', 'count'])
+            current_performance = current_performance[current_performance['count'] >= 3]
+            top_actions = current_performance.sort_values('mean', ascending=False).head(10)
+
         # Find corresponding action objects
         previous_best = []
         for action_id in top_actions.index:
@@ -269,21 +329,21 @@ class PersonalizedMarketingAlgorithm:
                 if action.action_id == action_id:
                     previous_best.append(action)
                     break
-        
+
         # Load current action bank for this iteration (what the company is actually using)
         current_action_bank = self._load_current_action_bank(iteration)
         print(f"   Loaded current action bank with {len(current_action_bank)} actions")
-        
-        selection_result = self._generate_new_action_bank(users, previous_best, current_action_bank)
+
+        selection_result = self._generate_new_action_bank(selection_users, previous_best, current_action_bank)
         new_action_bank = selection_result['selected_actions']
         generation_time = time.time() - generation_start
         print(f"   ⏱️  Action bank generation completed in {generation_time:.2f}s")
-        
+
         # 7. Evaluate the new action bank
         print("7. Evaluating new action bank...")
         bank_eval_start = time.time()
         # Use selection's evaluation if provided, otherwise compute
-        evaluation_results = selection_result.get('evaluation') or self._evaluate_action_bank(new_action_bank, users)
+        evaluation_results = selection_result.get('evaluation') or self._evaluate_action_bank(new_action_bank, selection_users)
         bank_eval_time = time.time() - bank_eval_start
         print(f"   ⏱️  Action bank evaluation completed in {bank_eval_time:.2f}s")
         
@@ -291,7 +351,6 @@ class PersonalizedMarketingAlgorithm:
         print("8. Ground truth evaluation...")
         gt_eval_start = time.time()
         # Pass the correct users file path to the evaluator
-        users_file = os.path.join(self.results_dir, f"iteration_{iteration}", "users", "users.json")
         ground_truth_results = self.ground_truth_evaluator.evaluate_action_bank(
             new_action_bank, iteration, users_file=users_file
         )
@@ -308,15 +367,19 @@ class PersonalizedMarketingAlgorithm:
             'evaluation_results': evaluation_results,
             'ground_truth_results': ground_truth_results,
             'previous_best_actions': previous_best,
-            'observations_processed': len(all_observations),
+            'observations_processed': len(training_df),
+            'training_weight': training_weight,
+            'selection_weight': float(sum(u.weight for u in selection_users)),
             'selection_uncertainty': selection_result.get('uncertainty')
         })
         save_time = time.time() - save_start
         print(f"   ⏱️  Results saving completed in {save_time:.2f}s")
         
         total_process_time = time.time() - process_start
+        selection_weight_total = float(sum(u.weight for u in selection_users))
         print(f"Algorithm processing complete for iteration {iteration}!")
-        print(f"  Observations processed: {len(all_observations)}")
+        print(f"  Training rows: {len(training_df)} (effective weight {training_weight:.0f})")
+        print(f"  Selection population weight: {selection_weight_total:.0f}")
         print(f"  New action bank size: {len(new_action_bank)}")
         print(f"  Expected improvement: {evaluation_results.get('total_value', 0):.4f}")
         print(f"  Ground truth reward: {ground_truth_results.get('average_expected_reward', 0):.4f}")
@@ -332,6 +395,22 @@ class PersonalizedMarketingAlgorithm:
         
         return algorithm_results
     
+    def _parse_array(self, value: Any) -> np.ndarray:
+        """Utility to convert serialized vectors into numpy arrays."""
+        if isinstance(value, np.ndarray):
+            return value.astype(float)
+        if isinstance(value, list):
+            return np.array(value, dtype=float)
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return np.array([], dtype=float)
+            parts = [p for p in value.split(',') if p]
+            return np.array([float(p) for p in parts], dtype=float)
+        if value is None:
+            return np.array([], dtype=float)
+        return np.array([float(value)], dtype=float)
+
     def _load_users(self, users_file: str) -> List[User]:
         """Load users from JSON file and convert to User objects."""
         with open(users_file, 'r') as f:
@@ -341,11 +420,40 @@ class PersonalizedMarketingAlgorithm:
         for user_data in data['users']:
             user = User(
                 user_id=user_data['user_id'],
-                features=np.array(user_data['feature_vector'])
+                features=self._parse_array(user_data.get('feature_vector', [])),
+                weight=float(user_data.get('weight', 1.0)),
+                metadata={
+                    'segment': user_data.get('segment'),
+                    'source': 'user_level'
+                }
             )
             users.append(user)
         
         return users
+
+    def _load_segment_users(self, segment_users_file: str) -> List[User]:
+        """Load segment-level users from JSON file."""
+        with open(segment_users_file, 'r') as f:
+            data = json.load(f)
+
+        segments = []
+        for segment_data in data.get('segments', []):
+            segment_id = segment_data.get('segment_id', f"segment_{len(segments)}")
+            features = self._parse_array(segment_data.get('feature_vector', []))
+            weight = float(segment_data.get('weight', segment_data.get('targeted_count', 1.0)))
+            metadata = {
+                'population_count': segment_data.get('population_count'),
+                'targeted_count': segment_data.get('targeted_count'),
+                'feature_stats': segment_data.get('feature_stats')
+            }
+            segments.append(User(
+                user_id=segment_id,
+                features=features,
+                weight=weight,
+                metadata=metadata
+            ))
+
+        return segments
     
     def _load_actions(self, action_bank_file: str) -> List[Action]:
         """Load actions from JSON file and convert to Action objects."""
@@ -408,60 +516,152 @@ class PersonalizedMarketingAlgorithm:
     def _combine_historical_data(self, current_iteration: int) -> pd.DataFrame:
         """Combine observation data from all previous iterations."""
         all_observations = []
-        
+
         for i in range(1, current_iteration + 1):
-            iter_obs_file = os.path.join(self.results_dir, f"iteration_{i}", 
-                                       "observations", "observations.csv")
+            if self.use_segment_data:
+                iter_obs_file = os.path.join(
+                    self.results_dir,
+                    f"iteration_{i}",
+                    "segment_data",
+                    "segment_action_observations.csv"
+                )
+            else:
+                iter_obs_file = os.path.join(
+                    self.results_dir,
+                    f"iteration_{i}",
+                    "observations",
+                    "observations.csv"
+                )
+
             if os.path.exists(iter_obs_file):
                 iter_df = pd.read_csv(iter_obs_file)
-                # Convert string representations of arrays back to arrays
-                if 'user_features' in iter_df.columns:
-                    iter_df['user_features'] = iter_df['user_features'].apply(
-                        lambda x: np.array([float(v) for v in x.split(',')]) if isinstance(x, str) else np.array(x)
-                    )
-                if 'action_embedding' in iter_df.columns:
-                    iter_df['action_embedding'] = iter_df['action_embedding'].apply(
-                        lambda x: np.array([float(v) for v in x.split(',')]) if isinstance(x, str) else np.array(x)
-                    )
+                iter_df['iteration'] = i
                 all_observations.append(iter_df)
-        
+
         if all_observations:
             return pd.concat(all_observations, ignore_index=True)
-        else:
-            return pd.DataFrame()
+        return pd.DataFrame()
     
-    def _train_models(self, observations_df: pd.DataFrame, 
-                     users: List[User], actions: List[Action]) -> Dict[str, Any]:
-        """Train reward model on observation data."""
+    def _prepare_training_dataframe(self, observations_df: pd.DataFrame,
+                                    action_lookup: Dict[str, Action]) -> pd.DataFrame:
+        """Convert raw observation records into a model-friendly DataFrame."""
+        records: List[Dict[str, Any]] = []
+
+        if observations_df is None or len(observations_df) == 0:
+            return pd.DataFrame(records)
+
+        if self.use_segment_data:
+            for _, row in observations_df.iterrows():
+                action_id = row.get('action_id')
+                action = action_lookup.get(action_id)
+                if action is None:
+                    continue
+
+                features = self._parse_array(row.get('segment_features') or row.get('feature_vector', []))
+                action_embedding = self._parse_array(row.get('action_embedding_array') or row.get('action_embedding', []))
+                if action_embedding.size == 0:
+                    action_embedding = action.embedding
+
+                weight = float(row.get('sample_weight', row.get('count', row.get('targeted_count', 1.0))))
+                reward = float(row.get('reward', row.get('conversion_rate', 0.0)))
+                record = {
+                    'user_features': features,
+                    'action_embedding': action_embedding,
+                    'sample_weight': weight,
+                    'reward': reward,
+                    'segment_id': row.get('segment_id'),
+                    'iteration': row.get('iteration')
+                }
+
+                if self.task_type == 'binary':
+                    conversions = row.get('conversions')
+                    if conversions is None:
+                        conversions = reward * weight
+                    failures = max(0.0, weight - conversions)
+                    record['conversions'] = float(conversions)
+                    record['failures'] = float(failures)
+
+                records.append(record)
+        else:
+            for _, row in observations_df.iterrows():
+                features = self._parse_array(row.get('user_features'))
+                action_embedding = self._parse_array(row.get('action_embedding'))
+                reward = float(row.get('reward', 0.0))
+                record = {
+                    'user_features': features,
+                    'action_embedding': action_embedding,
+                    'reward': reward,
+                    'sample_weight': 1.0,
+                    'iteration': row.get('iteration')
+                }
+                if self.task_type == 'binary':
+                    record['conversions'] = float(reward)
+                    record['failures'] = float(1.0 - reward)
+                records.append(record)
+
+        return pd.DataFrame(records)
+
+    def _train_models(self, training_df: pd.DataFrame) -> Dict[str, Any]:
+        """Train reward model on prepared observation data."""
         training_results = {}
-        
-        if len(observations_df) == 0:
+
+        if training_df is None or len(training_df) == 0:
             print("   No observation data available for training")
             return training_results
-        
-        # Prepare data for training (rename columns to match expected format)
-        training_data = observations_df.copy()
-        if 'reward' in training_data.columns:
-            training_data['outcome'] = training_data['reward']
-        
+
         # Train reward model
         try:
-            print("   Training reward model...")
-            reward_metrics = self.reward_model.fit(training_data)
+            print(f"   Training reward model on {len(training_df)} aggregated samples...")
+
+            if self.task_type == 'binary' and 'conversions' in training_df.columns and 'failures' in training_df.columns:
+                expanded_records = []
+                for _, row in training_df.iterrows():
+                    successes = float(row['conversions'])
+                    failures = float(row['failures'])
+                    features = row['user_features']
+                    action_embedding = row['action_embedding']
+
+                    if successes > 0:
+                        expanded_records.append({
+                            'user_features': features,
+                            'action_embedding': action_embedding,
+                            'reward': 1.0,
+                            'sample_weight': successes
+                        })
+                    if failures > 0:
+                        expanded_records.append({
+                            'user_features': features,
+                            'action_embedding': action_embedding,
+                            'reward': 0.0,
+                            'sample_weight': failures
+                        })
+
+                training_input = pd.DataFrame(expanded_records)
+            else:
+                training_input = training_df.copy()
+
+            reward_metrics = self.reward_model.fit(training_input)
             training_results['reward_model'] = reward_metrics
-            print(f"   Reward model trained - AUC: {reward_metrics.get('val_auc', 'N/A'):.4f}")
+            if self.task_type == 'binary':
+                auc = reward_metrics.get('val_auc') or reward_metrics.get('train_auc') or reward_metrics.get('auc')
+                if auc is not None:
+                    print(f"   Reward model trained - AUC: {float(auc):.4f}")
+            else:
+                rmse = reward_metrics.get('val_rmse') or reward_metrics.get('train_rmse')
+                if rmse is not None:
+                    print(f"   Reward model trained - RMSE: {float(rmse):.4f}")
         except Exception as e:
             print(f"   Error training reward model: {e}")
             training_results['reward_model'] = {'error': str(e)}
-        
-        
+
         # Store training history
         self.training_history.append({
             'iteration': len(self.training_history) + 1,
-            'training_data_size': len(observations_df),
-            'results': training_results
+            'training_data_size': len(training_df),
+            'results': training_results,
+            'use_segment_data': self.use_segment_data
         })
-        
+
         return training_results
     
     def _evaluate_reward_model_on_ground_truth(self, users: List[User], 

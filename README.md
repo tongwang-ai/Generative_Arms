@@ -43,7 +43,7 @@ PersonalizedTargeting/
 │   └── util/                         # Shared utilities
 │       ├── action_embedder.py        # OpenAI action creation and embedding
 │       ├── action_generator.py       # LLM-based action generation
-│       └── user_generator.py         # User population with 8-dimensional features
+│       └── user_generator.py         # User population with 30-dimensional features and deterministic segments
 │
 ├── results/                          # Generated results (auto-created)
 │   ├── simulation_*/                 # Full simulation experiment results
@@ -59,9 +59,9 @@ PersonalizedTargeting/
 │       └── iteration_X/              # Algorithm results on pre-generated data
     
 │
-├── run_full_simulation.py            # Main entry point
-├── generate_simulation_data.py       # Generate reproducible simulation data
+├── generate_simulation_data.py       # Generate reusable simulation data bundles
 ├── run_simulation_from_data.py       # Run algorithms on pre-generated data
+├── run_random_baseline_from_data.py  # Random baseline on pre-generated data
 ├── test_preference_model.py          # User preference model testing
 └── requirements.txt                  # Python dependencies
 ```
@@ -110,39 +110,42 @@ Company strategy implementations:
 
 ### Basic Usage
 
+The workflow now always runs from a reproducible data bundle. Typical flow:
+
 ```bash
-# Simple test run
-python run_full_simulation.py --iterations 3 --users 100 --initial_actions 10
+# 1. Generate reusable simulation data (actions + user cohorts + segments)
+python generate_simulation_data.py \
+  --users 1000 \
+  --iterations 4 \
+  --initial_actions 30
 
-# Run with same action bank for all stages
-python run_full_simulation.py \
-    --iterations 4 \
-    --users 10000 \
-    --initial_actions 30 \
-    --company_strategy linucb \
-    --reward_model_type lightgbm \
-    --action_bank_size 0
+# 2. Run the optimized algorithm on the saved data
+python run_simulation_from_data.py \
+  --data_dir data/simulation_data/<dataset_id> \
+  --results_dir results \
+  --use_segment
 
-# Production configuration
-python run_full_simulation.py \
-    --iterations 4 \
-    --users 10000 \
-    --initial_actions 30 \
-    --action_bank_size 10 \
-    --company_strategy linucb \
-    --reward_model_type bayesian_neural \
-    --bnn_mc_samples 30 \
-    --use_pca \
-    --pca_components 128
+# 3. (Optional) Compare against the random baseline
+python run_random_baseline_from_data.py \
+  --data_dir data/simulation_data/<dataset_id> \
+  --results_dir results \
+  --use_segment
+
+# Add `--task_type regression` to either command to train a regression-style reward model.
 ```
 
 ## Configuration Options
 
-### Core Parameters
-- `--iterations`: Number of optimization iterations (default: 5)
-- `--users`: User population size per iteration (default: 1000)
-- `--initial_actions`: Starting action bank size (default: 30)
-- `--results_dir`: Output directory (default: 'results')
+### Core Parameters (run_simulation_from_data.py / run_random_baseline_from_data.py)
+- `--data_dir`: Path to the generated simulation dataset (required)
+- `--iterations`: Number of iterations to replay (default: infer from dataset)
+- `--results_dir`: Output directory root (default: `results`)
+- `--use_segment`: Consume segment-level aggregates instead of raw user rows
+- `--number_of_segments`: (optional) override for segment count (default: 1024)
+- `--users_per_segment_per_iteration`: Portion/count of users targeted per segment
+- `--task_type`: Reward-model objective (`binary` or `regression`, default `binary`)
+
+> Regression task type is currently supported for the LightGBM reward model. Other models remain binary-only.
 
 ### Reward Models
 - `--reward_model_type`: Choose from 'neural', 'lightgbm', 'gaussian_process', 'bayesian_neural', 'ft_transformer'
@@ -182,24 +185,34 @@ Create reproducible datasets with fixed user populations and initial action bank
 python generate_simulation_data.py \
   --users 10000 \
   --iterations 4 \
-  --initial_actions 30
-
-# Advanced data generation with custom ground truth
-python generate_simulation_data.py \
-  --users 1000 \
-  --iterations 5 \
-  --initial_actions 25 \
+  --initial_actions 30 \
   --openai_api_key your_api_key
+
+# Generated data with segmentation settings
+python generate_simulation_data.py \
+  --users 100000 \
+  --iterations 4 \
+  --initial_actions 30 \
+  --openai_api_key your_api_key \
+  --number_of_segments 1024 \
+  --users_per_segment_per_iteration 1000 \
+  --use_static_user_base
 ```
 
 **Output Structure:**
 ```
 data/simulation_data/<unique_id>/
-├── data_config.json                 # Generation parameters
+├── data_config.json                   # Generation parameters (incl. segment settings)
 ├── initialization/
-│   └── action_bank/action_bank.json # Initial marketing actions
-└── iteration_X/
-    └── users/users.json             # User populations per iteration
+│   ├── action_bank/action_bank.json   # Initial marketing actions
+│   └── users/
+│       ├── users.json                 # Base user cohort
+│       └── segment_summary.json       # Segment-level statistics for the cohort
+├── iteration_X/
+│   └── users/
+│       ├── users.json                 # Per-iteration user cohort (reused or regenerated)
+│       └── user_segments.json         # Aggregated segment statistics (mirrors production payload)
+└── embedding_cache.json               # Cached action embeddings generated during setup
 ```
 
 ### 2. Run Algorithms on Generated Data
@@ -214,7 +227,16 @@ python run_simulation_from_data.py \
   --reward_model_type lightgbm \
   --use_pca \
   --pca_components 128 \
-  --action_bank_size 0
+  --action_bank_size 0 \
+  --task_type binary
+
+# Baseline (random generation)
+python run_random_baseline_from_data.py \
+  --data_dir data/simulation_data/<unique_id> \
+  --company_strategy linucb \
+  --random_actions_per_iteration 5 \
+  --use_segment \
+  --task_type binary
 
 # Test LightGBM approach
 python run_simulation_from_data.py \
@@ -223,7 +245,19 @@ python run_simulation_from_data.py \
   --reward_model_type lightgbm \
   --use_pca \
   --pca_components 128 \
-  --action_bank_size 5
+  --action_bank_size 5 \
+  --task_type binary
+
+# Test LightGBM approach with segment data
+python run_simulation_from_data.py \
+  --data_dir data/simulation_data/<unique_id> \
+  --company_strategy linucb \
+  --reward_model_type lightgbm \
+  --use_pca \
+  --pca_components 128 \
+  --action_bank_size 5 \
+  --use_segment \
+  --task_type regression
 ```
 
 ## Understanding Results
@@ -265,7 +299,7 @@ python test_preference_model.py --model_type neural --users 500
 
 ### Component Architecture
 
-The system uses clean interfaces for extensibility:
+The system uses interfaces for extensibility:
 
 ```python
 # Add new reward model
@@ -298,7 +332,5 @@ For optimal performance, set up OpenAI API key:
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
 ```
-
-Without an API key, the system uses fallback random embeddings for action generation.
 
 This framework provides a complete testing environment for validating action bank generation algorithms before deployment in real marketing campaigns.
